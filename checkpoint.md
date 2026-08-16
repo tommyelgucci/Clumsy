@@ -1,68 +1,100 @@
-# Checkpoint — Bitácora de avances
+# Checkpoint — Progress log
 
-### 2026-08-15 (más tarde) — Pinceles y paletas: puerto directo de Trace, no rediseño
+### 2026-08-16 — Project switched to English; task 1.1 scaffold done
 
-El dueño preguntó específicamente si Clumsyloop iba a reusar los pinceles y
-paletas de color de Trace, dado lo avanzado que estaba ese trabajo ahí. La
-respuesta era sí, pero el blueprint original solo lo dejaba implícito dentro
-de "portar el patrón `core/`" — sin nombrar `brush.ts` (20 presets, 5
-categorías) ni el sistema de paletas de `state/store.ts` como piezas
-explícitas. Se corrigió en `CLAUDE.md` y `RUMBO.md`: estas dos piezas van de
-puerto directo, sin la adaptación que sí necesita el resto del motor
-(cámara, monetización), precisamente porque no tienen relación con ninguna
-de las dos. Beautyapp ya es precedente de que `brush.ts` se porta bien a
-otro proyecto.
+The owner decided the whole project — code, docs, commits, everything —
+goes in English from here on, breaking with Draw/Beautyapp's
+Spanish-language convention. `CLAUDE.md`, `RUMBO.md`, `checkpoint.md`, and
+`tasks.json` were rewritten in English (content unchanged, translation
+only).
+
+Also completed task 1.1 from `tasks.json`: the Capacitor scaffold. React
+19.2.8 + Vite 8.2.1 + Zustand 5.0.15 + TypeScript, wired up with the
+`core/`/`gl/`/`state/`/`ui/` folder layout the rest of the engine will
+grow into (only `src/main.tsx` and `src/ui/App.tsx` exist so far — a
+blank shell, nothing to render yet). `npm run build` and `npm run lint`
+both pass clean. Added the iOS platform via `npx cap add ios` (Capacitor
+8.5, Swift Package Manager — no CocoaPods) and ran `npx cap sync ios`
+successfully, matching task 1.1's verify_command.
+
+**One deviation from the blueprint, made on the spot**: `typescript` is
+pinned to `~6.0.3` instead of the just-released `7.0.2`. Checked
+`typescript-eslint`'s registry listing — its peer range still caps at
+`typescript <6.1.0`, so installing TS7 would have broken `npm run lint`
+outright. Noted here so nobody re-bumps to "latest" without checking
+`typescript-eslint` support first; revisit once it publishes a TS7-compatible
+release.
+
+Not yet done, still open from task 1.1: opening `npx cap open ios` and
+confirming the blank screen builds and runs on a physical device — no
+Xcode/device access from this environment. That verification is next,
+on hardware, before starting 1.2 (the native camera plugin).
 
 ---
 
-### 2026-08-15 — Nace el proyecto: arquitectura y nombre, sin código todavía
+### 2026-08-15 (later) — Brushes and palettes: direct port from Trace, not a redesign
 
-Surgió comparando el catálogo de proyectos existentes del dueño (Dimel,
-Trace, Beautyapp, SkySimAcademy, Draw) para evaluar cuál tenía más
-recorrido comercial, y de ahí a una pregunta puntual: ¿vale la pena un
-proyecto de animación nuevo, basado en la arquitectura de Trace, pero
-diseñado para monetizar desde el día uno en vez de quedarse gratis y
-local como Trace?
+The owner specifically asked whether Clumsyloop would reuse Trace's
+brushes and color palettes, given how far along that work already was.
+The answer was yes, but the original blueprint only implied it inside
+"port the `core/` pattern" — without naming `brush.ts` (20 presets, 5
+categories) or the palette system in `state/store.ts` as explicit pieces.
+Fixed in `CLAUDE.md` and `RUMBO.md`: these two pieces are a direct port,
+without the adaptation the rest of the engine needs (camera,
+monetization), precisely because they have nothing to do with either.
+Beautyapp is already precedent that `brush.ts` ports well to another
+project.
 
-**La investigación de mercado vino primero que el código.** Se comprobó
-—no se asumió— que Stop Motion Studio domina el rubro de stop motion
-puro (~2000 reseñas, 4.5★, más de una década en el mercado): competir de
-frente ahí es una carrera perdida. Se buscó el ángulo distinto revisando
-qué hace Procreate Dreams, la herramienta profesional de referencia en
-animación: exporta video o secuencia de imágenes crudas, pero ni siquiera
-ellos construyeron un feed propio — la secuencia cruda es explícitamente
-para pipelines profesionales, no para compartir. Ese fue el dato que
-cerró la decisión: dibujo + cámara en la misma línea de tiempo, con feed
-de solo `.mp4`, es un ángulo que nadie en este mercado está sirviendo.
+---
 
-**Se corrió el skill `architect`** (con las carpetas de referencia
-`questions/`/`knowledge/` no disponibles en este entorno — se armó el
-proceso con criterio propio, mismo rigor: entrevista, un gate de
-confirmación, nada de código antes de cerrar decisiones) para bajar la
-idea a arquitectura concreta. Decisiones cerradas, en orden: Capacitor
-(no PWA — la cámara necesita control nativo de exposición/foco que la
-web no da, y el público llega por búsqueda de App Store, no instalando
-una PWA) → Firebase (no Supabase — por madurez de push notifications
-pensando en una futura versión Android) → feed social con clips
-publicables → moderación manual para v1 (reporte + baja en 24h, mínimo
-que exige Apple para UGC) → solo iOS para el lanzamiento. El detalle
-completo con el porqué de cada una está en `RUMBO.md`.
+### 2026-08-15 — Project born: architecture and name, no code yet
 
-**El nombre costó más que la arquitectura.** Varias rondas descartadas:
-"MotionLobby"/"MotionLair" (suenan a herramienta de trabajo, no a algo
-que alguien de 16-20 años quiere al lado de TikTok), "Squish"/"Clayo"/
-"Framey"/"Wiggle" (ya existían), "Nudge"/"Sprocket"/"Blorp"/"Glob"
-(colisiones confirmadas por búsqueda), "Blobbymotion"/"Blobby" solo
-(el territorio "blob" está saturado — tres apps publicadas solo con esa
-palabra), "Sweesh" (descartado por parecido fonético con "Swoosh", marca
-registrada de Nike — riesgo legal real, no solo estético), "Clumsy" solo
-(saturado: ocho apps distintas lo usan como palabra suelta para juegos
-casuales). Terminó en **Clumsyloop** — compuesto sin choques, y el único
-que cuenta algo del producto (la imperfección hecha a mano es el
-encanto) en vez de solo describirlo.
+Came up while comparing the owner's existing project catalog (Dimel,
+Trace, Beautyapp, SkySimAcademy, Draw) to evaluate which had the most
+commercial runway, and from there to a specific question: is a new
+animation project worth building, based on Trace's architecture, but
+designed to monetize from day one instead of staying free and local like
+Trace?
 
-Se creó el repositorio `tommyelgucci/Clumsy` (vacío) y se escribieron los
-tres documentos de arranque (`CLAUDE.md`, `RUMBO.md`, este archivo). El
-siguiente paso real, marcado en `RUMBO.md`, es prototipar el plugin
-nativo de cámara sobre AVFoundation — es el riesgo técnico que puede
-tumbar el proyecto entero, así que va antes que cualquier pantalla.
+**Market research came before code.** It was verified — not assumed —
+that Stop Motion Studio dominates the pure stop-motion niche (~2000
+reviews, 4.5★, over a decade in the market): competing head-on there is a
+losing race. The differentiating angle was found by checking what
+Procreate Dreams, the professional animation tool of reference, does: it
+exports video or a raw image sequence, but not even they built their own
+feed — the raw sequence is explicitly meant for professional pipelines,
+not for sharing. That was the fact that closed the decision: drawing +
+camera on the same timeline, with an `.mp4`-only feed, is an angle nobody
+in this market is serving.
+
+**Ran the `architect` skill** (with the `questions/`/`knowledge/`
+reference folders unavailable in this environment — the process was put
+together with the same rigor from first principles: interview, a
+confirmation gate, no code before decisions closed) to turn the idea into
+concrete architecture. Decisions closed, in order: Capacitor (not a PWA —
+the camera needs native exposure/focus control the web doesn't give, and
+the audience arrives via App Store search, not by installing a PWA) →
+Firebase (not Supabase — for push notification maturity, thinking about a
+future Android version) → social feed with publishable clips → manual
+moderation for v1 (report + takedown within 24h, the minimum Apple
+requires for UGC) → iOS-only for launch. Full detail with the reasoning
+for each is in `RUMBO.md`.
+
+**The name took longer than the architecture.** Several discarded
+rounds: "MotionLobby"/"MotionLair" (sound like a work tool, not something
+a 16-20 year-old wants next to TikTok), "Squish"/"Clayo"/"Framey"/"Wiggle"
+(already existed), "Nudge"/"Sprocket"/"Blorp"/"Glob" (confirmed clashes
+via search), "Blobbymotion"/"Blobby" alone (the "blob" territory is
+saturated — three published apps use just that word), "Sweesh" (dropped
+for phonetic closeness to "Swoosh," Nike's registered trademark — a real
+legal risk, not just an aesthetic one), "Clumsy" alone (saturated: eight
+different apps use it as a standalone word for casual games). Landed on
+**Clumsyloop** — a compound with no clashes, and the only one that says
+something about the product (handmade imperfection is the charm) instead
+of just describing it.
+
+Created the `tommyelgucci/Clumsy` repository (empty) and wrote the three
+starting documents (`CLAUDE.md`, `RUMBO.md`, this file). The real next
+step, flagged in `RUMBO.md`, is prototyping the native camera plugin over
+AVFoundation — it's the technical risk that could sink the whole project,
+so it comes before any screen.
