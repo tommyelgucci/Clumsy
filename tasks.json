@@ -35,8 +35,8 @@
           "description": "The part that actually matters: manually expose the first capture and keep those values fixed (AVCaptureDevice.lockConfiguration, exposureMode/focusMode .locked) for the whole stop-motion session, instead of every photo re-exposing on its own.",
           "acceptance_criteria": "WHEN 10 consecutive frames are captured of a static scene under constant light THE SYSTEM SHALL produce 10 images with visually identical exposure and focus to each other — no flicker from auto re-exposure.",
           "verify_command": null,
-          "verify_note": "Manual verification: capture the sequence, play it back at 12fps, confirm by eye there's no flicker. This is the criterion that decides whether the project continues or gets rethought — see RUMBO.md.",
-          "status": "pending"
+          "verify_note": "Manual verification: capture the sequence, play it back at 12fps, confirm by eye there's no flicker. This is the criterion that decides whether the project continues or gets rethought — see RUMBO.md. Code written as of 2026-08-16 (lockCaptureSettings/unlockCaptureSettings on CameraCapturePlugin, KVO-waits for isAdjustingExposure/isAdjustingFocus to settle before locking) plus lock/unlock buttons and a multi-frame filmstrip in the App.tsx test harness — but never compiled or run, no Xcode/device access from this environment. The actual 10-frames-no-flicker check hasn't happened.",
+          "status": "in_progress"
         }
       ]
     },

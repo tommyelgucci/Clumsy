@@ -1,5 +1,38 @@
 # Checkpoint — Progress log
 
+### 2026-08-16 (later still) — Task 1.3: exposure/focus/white-balance lock
+
+Added `lockCaptureSettings()`/`unlockCaptureSettings()` to
+`CameraCapturePlugin.swift` — this is the piece `RUMBO.md` calls out as
+the actual make-or-break bet, so it got more care than a bare
+`exposureMode = .locked`. Locking waits for `isAdjustingExposure`/
+`isAdjustingFocus` to settle first (KVO observers on the
+`AVCaptureDevice`, with a 1.5s timeout fallback so a device stuck
+"adjusting" can't hang the call) before freezing exposure, focus, and
+white balance via `lockForConfiguration()`. Locking mid-adjustment would
+freeze a transient value instead of a converged one — exactly the kind
+of subtle bug that would look fine in a code read and wrong on a device.
+`unlockCaptureSettings()` reverts to the three continuous-auto modes, for
+starting a fresh session under different light. Registered both methods
+in `CameraCapturePlugin.m`; no new files, so no further `project.pbxproj`
+edits needed.
+
+Extended the JS wrapper and the `App.tsx` test harness with lock/unlock
+buttons and a filmstrip of every captured frame (was a single
+overwritten photo before) — specifically so 1.3's acceptance criteria
+(10 consecutive frames, visually compared for flicker) is actually
+checkable by hand once this runs on a device.
+
+Same caveat as 1.1/1.2: `tsc`/`vite build`/`cap sync` pass, but the Swift
+has never compiled — no Xcode/device access here. All three tasks in
+phase 1 are code-complete and marked `in_progress`, waiting on one
+physical-device session to open the project, run it, and do the actual
+lock → capture 10 frames → play back at 12fps → look for flicker check.
+That result is the gate RUMBO.md describes: if it flickers, phase 1
+needs rethinking before anything in phase 2 starts.
+
+---
+
 ### 2026-08-16 (later) — Task 1.2: native camera plugin skeleton written
 
 Wrote the custom Capacitor plugin from task 1.2: `CameraCapturePlugin.swift`
