@@ -140,3 +140,18 @@ is literally what the app produces.
   been prototyped yet. Everything else in this document assumes it
   works; if it doesn't hit the necessary fidelity, this plan needs
   revisiting starting from phase 1.
+- **UPNG.js (MIT) is the library to reach for once local persistence
+  (task 2.5) or a raw-sequence power-user export gets built** — PNG/APNG
+  encoding that fits the format Trace's `io.ts` pattern already expects.
+  Evaluated against three other permissively-licensed repos on
+  2026-08-16 (open-brush, Apache-2.0, and ccapture.js, MIT) while
+  looking for inspiration; the other two didn't yield anything concrete
+  for this project — open-brush is Unity/C# 3D and Clumsyloop's brush
+  system is already a direct port from Trace, and ccapture.js's actual
+  encoders target browser canvas capture, not the AVFoundation export
+  path this project uses.
+- **Motion blur between stop-motion frames is a plausible v2+ feature**,
+  not scoped for v1 and not yet a task — noted here so it isn't lost.
+  ccapture.js's technique (GPU-side accumulation across sub-frames,
+  WebGL2 `EXT_color_buffer_float`) is the concrete approach to reach for
+  if this ever gets built.
