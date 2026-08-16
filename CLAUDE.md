@@ -30,6 +30,15 @@ punto de contacto con WebGL, `state/` con Zustand, `ui/` con React).
 Portalo desde ahí como referencia de diseño, no copies archivos sin
 adaptar: Trace no tiene cámara ni monetización, este proyecto sí.
 
+**Excepción explícita — dos piezas van de puerto directo, sin rediseñar:**
+`core/brush.ts` (20 pinceles en 5 categorías, generación de estampas,
+filtro One Euro) y el sistema de paletas de `state/store.ts`
+(`PaletteGroup` + `UserPalette`). Son trabajo ya pulido y probado —
+Beautyapp ya demostró que `brush.ts` se porta bien a otro proyecto (su
+`StrokeBuilder` de retoque sale de esa misma base). No tienen relación
+con cámara ni con monetización, así que no les aplica la adaptación que
+sí necesita el resto del motor.
+
 ## Por dónde empezar
 
 | Querés saber… | Leé |

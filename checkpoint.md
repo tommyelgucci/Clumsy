@@ -1,5 +1,20 @@
 # Checkpoint — Bitácora de avances
 
+### 2026-08-15 (más tarde) — Pinceles y paletas: puerto directo de Trace, no rediseño
+
+El dueño preguntó específicamente si Clumsyloop iba a reusar los pinceles y
+paletas de color de Trace, dado lo avanzado que estaba ese trabajo ahí. La
+respuesta era sí, pero el blueprint original solo lo dejaba implícito dentro
+de "portar el patrón `core/`" — sin nombrar `brush.ts` (20 presets, 5
+categorías) ni el sistema de paletas de `state/store.ts` como piezas
+explícitas. Se corrigió en `CLAUDE.md` y `RUMBO.md`: estas dos piezas van de
+puerto directo, sin la adaptación que sí necesita el resto del motor
+(cámara, monetización), precisamente porque no tienen relación con ninguna
+de las dos. Beautyapp ya es precedente de que `brush.ts` se porta bien a
+otro proyecto.
+
+---
+
 ### 2026-08-15 — Nace el proyecto: arquitectura y nombre, sin código todavía
 
 Surgió comparando el catálogo de proyectos existentes del dueño (Dimel,

@@ -67,6 +67,18 @@ moderación **automática** (una API tipo Cloud Vision): sin tráfico real
 no hay con qué calibrarla, y construirla antes de tener el primer
 reporte real es resolver un problema que todavía no existe.
 
+**5. Pinceles y paletas se portan de Trace tal cual, no se rediseñan.**
+`core/brush.ts` (20 presets en 5 categorías: boceto, tinta, pintura,
+textura, borrador — con generación de estampas y el filtro One Euro) y
+el sistema de paletas de `state/store.ts` (`PaletteGroup` fijas +
+`UserPalette` del usuario) ya están pulidos y probados en producción.
+Beautyapp ya validó que `brush.ts` se porta bien a otro proyecto — su
+`StrokeBuilder` de retoque nace de la misma base. Rehacerlos de cero
+para Clumsyloop tiraría trabajo terminado a la basura sin ganar nada:
+a diferencia del resto del motor, estas dos piezas no tienen ninguna
+relación con cámara ni con monetización, así que no necesitan la
+adaptación que sí le hace falta a `document.ts`/`engine.ts`.
+
 ## El riesgo técnico que va primero
 
 **El plugin nativo de cámara no es un detalle de implementación, es el
