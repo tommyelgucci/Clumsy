@@ -1,0 +1,34 @@
+name: iOS build check
+
+# Compile-only safety net: confirms the Swift/Obj-C in ios/App/App
+# (CameraCapturePlugin in particular) actually builds. It does NOT
+# validate camera behavior — the simulator destination has no real
+# camera, and this never runs on physical hardware. Tasks 1.2/1.3 still
+# need a real device session before they can be marked done.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync ios
+      - name: Build for iOS Simulator (compile check, no signing)
+        run: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build

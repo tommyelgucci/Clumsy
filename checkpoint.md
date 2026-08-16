@@ -1,5 +1,35 @@
 # Checkpoint — Progress log
 
+### 2026-08-16 (yet later) — GitHub Pages preview + an iOS compile-check CI job
+
+Owner asked to try GitHub Pages to test the app. Flagged upfront that
+this can't verify anything camera-related — `CameraCapture` is a native
+Swift plugin with no web fallback, so its buttons will just surface a
+"not implemented" error in a browser — and the owner asked for both: the
+Pages preview (for the UI) and, in parallel, a way to at least start
+closing the "never actually compiled" gap that's been open since task
+1.2.
+
+Added `.github/workflows/deploy-pages.yml` — builds with
+`vite.config.ts`'s `base` set to `/Clumsy/` (only under `GITHUB_PAGES=true`,
+so the Capacitor build stays at `/`) and deploys via the standard
+`actions/upload-pages-artifact` + `actions/deploy-pages` pair. **One
+manual step is still needed that no tool here can do**: Settings → Pages
+→ Build and deployment → Source: GitHub Actions, on the actual GitHub
+web UI. The workflow will fail until that's flipped once.
+
+Added `.github/workflows/ios-build.yml` — runs on `macos-latest`,
+`xcodebuild`s the `App` scheme against a generic iOS Simulator
+destination with signing disabled. This is a real, if partial, answer to
+the "unverified" caveat repeated in every phase-1 checkpoint entry: it
+will catch a Swift/Obj-C compile error in `CameraCapturePlugin`
+automatically, on every push and on PR #1. It does **not** touch a real
+camera or prove anything about task 1.3's flicker check — the simulator
+has no camera, same limitation as always. Physical-device verification
+is still the only thing that can close out phase 1.
+
+---
+
 ### 2026-08-16 (even later) — Evaluated four external repos for inspiration/reuse
 
 Owner asked to check whether easings.net, open-brush, UPNG.js, and
