@@ -1,5 +1,24 @@
 # Checkpoint — Progress log
 
+### 2026-08-16 (later again) — Removed the GitHub Pages preview
+
+Owner tried it (confirmed both the UI loading and the expected
+"not implemented" behavior on the camera buttons) and decided it wasn't
+worth keeping — it only ever proved the web build compiles, which the
+`ios-build.yml` CI job and local `npm run build` already cover. Removed
+`.github/workflows/deploy-pages.yml` and the `GITHUB_PAGES`-conditional
+`base` in `vite.config.ts` that existed only for it. `ios-build.yml`
+(the actual useful one — compiles the Swift/Obj-C on every push and PR)
+stays.
+
+**Left over, not cleaned up here**: the `github-pages` deployment
+environment and the Pages "Source: GitHub Actions" setting are still
+configured on GitHub itself — nothing in this repo can undo that, it's
+a Settings → Pages change the owner would make by hand if they want it
+fully gone, not just unused.
+
+---
+
 ### 2026-08-16 (yet later) — GitHub Pages preview + an iOS compile-check CI job
 
 Owner asked to try GitHub Pages to test the app. Flagged upfront that
