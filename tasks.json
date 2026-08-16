@@ -1,96 +1,96 @@
 {
   "project": "clumsyloop",
   "generated": "2026-08-15",
-  "schema_note": "Formato propio, compuesto en este hilo porque las plantillas canónicas del skill architect (questions/, knowledge/, templates/) no estaban disponibles en este entorno de sesión. Una sesión de Claude Code fresca puede leer este archivo directamente y avanzar tarea por tarea respetando depends_on y status, con o sin el comando /architect-next.",
-  "ordering_rule": "No empieces una fase sin cerrar la anterior. La fase 1 existe para invalidar el proyecto temprano si el plugin de cámara no llega a la fidelidad necesaria — ver RUMBO.md, 'El riesgo técnico que va primero'.",
+  "schema_note": "Custom format, composed in this thread because the architect skill's canonical templates (questions/, knowledge/, templates/) weren't available in this session's environment. A fresh Claude Code session can read this file directly and move task by task respecting depends_on and status, with or without the /architect-next command.",
+  "ordering_rule": "Don't start a phase without closing the previous one. Phase 1 exists to invalidate the project early if the camera plugin can't hit the necessary fidelity — see RUMBO.md, 'The technical risk that goes first'.",
   "phases": [
     {
       "id": "1",
-      "name": "Prototipo del plugin de cámara (el riesgo real)",
+      "name": "Camera plugin prototype (the real risk)",
       "tasks": [
         {
           "id": "1.1",
-          "title": "Scaffold del proyecto Capacitor",
+          "title": "Capacitor project scaffold",
           "depends_on": [],
-          "description": "React 19.2.8 + TypeScript + Vite 8.0.9 + Zustand 5.0.15, envuelto en Capacitor 8.5 (adopta UIScene). Agregar la plataforma iOS. Verificar la versión de TypeScript con `npm view typescript version` al momento de instalar — no está pineada en este documento a propósito, se resuelve en el momento.",
-          "acceptance_criteria": "WHEN se corre `npx cap open ios` y se compila en un dispositivo físico THE SYSTEM SHALL mostrar la pantalla en blanco de la app sin errores de compilación nativa.",
+          "description": "React 19.2.8 + TypeScript + Vite 8.0.9 + Zustand 5.0.15, wrapped in Capacitor 8.5 (adopts UIScene). Add the iOS platform. Check the TypeScript version with `npm view typescript version` at install time — deliberately unpinned in this document, resolved in the moment.",
+          "acceptance_criteria": "WHEN `npx cap open ios` is run and the app is built on a physical device THE SYSTEM SHALL show the app's blank screen with no native build errors.",
           "verify_command": "npm run build && npx cap sync ios",
-          "verify_note": "El build de Xcode en sí se confirma abriendo el proyecto y corriendo en dispositivo — no hay forma de automatizar esa parte con un comando que salga en 0.",
-          "status": "pending"
+          "verify_note": "The Xcode build itself is confirmed by opening the project and running on a device — there's no way to automate that part with a command that exits 0. Automated part (verify_command) passes as of 2026-08-16; opening in Xcode and running on hardware is still open, no device access from this environment.",
+          "status": "in_progress"
         },
         {
           "id": "1.2",
-          "title": "Esqueleto del plugin nativo de cámara",
+          "title": "Native camera plugin skeleton",
           "depends_on": ["1.1"],
-          "description": "Plugin Capacitor a medida (Swift) que envuelve AVFoundation directamente — no `@capacitor/camera`. Solo la sesión de captura y una llamada que tome una foto sin control fino todavía; es el andamiaje, no la funcionalidad completa.",
-          "acceptance_criteria": "WHEN se llama al método del plugin desde JS THE SYSTEM SHALL devolver una imagen capturada por AVFoundation, visible en la app.",
+          "description": "Custom Capacitor plugin (Swift) that wraps AVFoundation directly — not `@capacitor/camera`. Just the capture session and one call that takes a photo without fine control yet; it's the scaffolding, not the full functionality.",
+          "acceptance_criteria": "WHEN the plugin method is called from JS THE SYSTEM SHALL return an image captured by AVFoundation, visible in the app.",
           "verify_command": null,
-          "verify_note": "Verificación manual en dispositivo físico — obligatorio, el simulador no tiene cámara real (ver CLAUDE.md).",
-          "status": "pending"
+          "verify_note": "Manual verification on a physical device — mandatory, the simulator has no real camera (see CLAUDE.md). Code written as of 2026-08-16 (CameraCapturePlugin.swift/.m + the JS wrapper and a manual test button in App.tsx) but not yet built or run on hardware — no Xcode/device access from this environment.",
+          "status": "in_progress"
         },
         {
           "id": "1.3",
-          "title": "Bloqueo de exposición/foco/balance de blancos entre fotogramas",
+          "title": "Lock exposure/focus/white balance across frames",
           "depends_on": ["1.2"],
-          "description": "La parte que de verdad importa: exponer manualmente la primera captura y mantener esos valores fijos (AVCaptureDevice.lockConfiguration, exposureMode/focusMode .locked) durante toda la sesión de stop motion, en vez de que cada foto se re-exponga sola.",
-          "acceptance_criteria": "WHEN se capturan 10 fotogramas seguidos de una escena estática con luz constante THE SYSTEM SHALL producir 10 imágenes con exposición y foco visualmente idénticos entre sí — sin el parpadeo característico de la re-exposición automática.",
+          "description": "The part that actually matters: manually expose the first capture and keep those values fixed (AVCaptureDevice.lockConfiguration, exposureMode/focusMode .locked) for the whole stop-motion session, instead of every photo re-exposing on its own.",
+          "acceptance_criteria": "WHEN 10 consecutive frames are captured of a static scene under constant light THE SYSTEM SHALL produce 10 images with visually identical exposure and focus to each other — no flicker from auto re-exposure.",
           "verify_command": null,
-          "verify_note": "Verificación manual: capturar la secuencia, reproducirla a 12fps, confirmar a ojo que no hay parpadeo. Es el criterio que decide si el proyecto sigue o se replantea — ver RUMBO.md.",
-          "status": "pending"
+          "verify_note": "Manual verification: capture the sequence, play it back at 12fps, confirm by eye there's no flicker. This is the criterion that decides whether the project continues or gets rethought — see RUMBO.md. Code written as of 2026-08-16 (lockCaptureSettings/unlockCaptureSettings on CameraCapturePlugin, KVO-waits for isAdjustingExposure/isAdjustingFocus to settle before locking) plus lock/unlock buttons and a multi-frame filmstrip in the App.tsx test harness — but never compiled or run, no Xcode/device access from this environment. The actual 10-frames-no-flicker check hasn't happened.",
+          "status": "in_progress"
         }
       ]
     },
     {
       "id": "2",
-      "name": "Motor de captura + dibujo local, sin nube",
+      "name": "Local capture + drawing engine, no cloud",
       "tasks": [
         {
           "id": "2.1",
-          "title": "Puerto del patrón core/ de Trace, adaptado a cels de cámara",
+          "title": "Port Trace's core/ pattern, adapted to camera cels",
           "depends_on": ["1.3"],
-          "description": "types.ts, math.ts, document.ts, history.ts — mismo diseño de capas que Trace (sin DOM, sin React), pero el Cel ahora puede originarse en una foto capturada además de un trazo dibujado.",
-          "acceptance_criteria": "WHEN se corre la suite de tests del motor THE SYSTEM SHALL pasar sin fallos, incluyendo un test que confirma que un Cel de cámara y uno dibujado comparten la misma interfaz de composición.",
+          "description": "types.ts, math.ts, document.ts, history.ts — same layered design as Trace (no DOM, no React), but a Cel can now originate from a captured photo as well as a drawn stroke.",
+          "acceptance_criteria": "WHEN the engine test suite runs THE SYSTEM SHALL pass with no failures, including a test confirming a camera Cel and a drawn Cel share the same compositing interface.",
           "verify_command": "npm test",
           "status": "pending"
         },
         {
           "id": "2.2",
-          "title": "Renderer WebGL2: composición de fotograma de cámara + capas dibujadas",
+          "title": "WebGL2 renderer: compositing camera frame + drawn layers",
           "depends_on": ["2.1"],
-          "description": "gl/renderer.ts — subir la foto capturada como textura, componerla con las capas de dibujo encima, todo premultiplicado por alfa. Un solo pase de volteo Y, igual que Trace.",
-          "acceptance_criteria": "WHEN se renderiza un documento con un Cel de cámara y un Cel dibujado encima THE SYSTEM SHALL mostrar ambos compuestos correctamente, sin halos de color ni desfase de orientación.",
+          "description": "gl/renderer.ts — upload the captured photo as a texture, composite it with the drawing layers on top, all alpha-premultiplied. A single Y-flip pass, same as Trace.",
+          "acceptance_criteria": "WHEN a document with a camera Cel and a drawn Cel on top is rendered THE SYSTEM SHALL show both composited correctly, with no color halos or orientation mismatch.",
           "verify_command": null,
-          "verify_note": "Verificación visual en navegador/dispositivo — mismo criterio que Trace y Beautyapp, tsc no ve un pipeline WebGL roto.",
+          "verify_note": "Visual verification in browser/device — same criterion as Trace and Beautyapp, tsc can't see a broken WebGL pipeline.",
           "status": "pending"
         },
         {
           "id": "2.3",
-          "title": "UI de captura: onion skin, obturador, carrete",
+          "title": "Capture UI: onion skin, shutter, filmstrip",
           "depends_on": ["2.2"],
-          "description": "Pantalla principal de captura — botón de obturador que llama al plugin nativo, overlay de onion skin del fotograma anterior, tira de miniaturas del carrete.",
-          "acceptance_criteria": "WHEN el usuario toca el obturador THE SYSTEM SHALL agregar un fotograma nuevo al carrete y actualizar el onion skin para que muestre ese fotograma como referencia del siguiente.",
+          "description": "Main capture screen — shutter button that calls the native plugin, onion-skin overlay of the previous frame, filmstrip thumbnail strip.",
+          "acceptance_criteria": "WHEN the user taps the shutter THE SYSTEM SHALL add a new frame to the filmstrip and update the onion skin to show that frame as a reference for the next one.",
           "verify_command": null,
-          "verify_note": "Verificación manual en dispositivo.",
+          "verify_note": "Manual verification on device.",
           "status": "pending"
         },
         {
           "id": "2.4",
-          "title": "Export local a .mp4 con marca de agua en el plan gratis",
+          "title": "Local export to .mp4 with watermark on the free plan",
           "depends_on": ["2.3"],
-          "description": "Codificación del carrete completo (cámara + capas dibujadas compuestas) a .mp4 vía AVFoundation. Marca de agua condicionada al estado de entitlement — que en esta fase todavía no existe, así que por ahora se asume plan gratis siempre.",
-          "acceptance_criteria": "WHEN se exporta un proyecto de al menos 3 fotogramas THE SYSTEM SHALL generar un archivo .mp4 reproducible fuera de la app, con la marca de agua visible.",
+          "description": "Encode the full filmstrip (camera + composited drawing layers) to .mp4 via AVFoundation. Watermark gated on entitlement state — which doesn't exist yet at this phase, so for now the free plan is always assumed.",
+          "acceptance_criteria": "WHEN a project of at least 3 frames is exported THE SYSTEM SHALL produce a .mp4 file playable outside the app, with the watermark visible.",
           "verify_command": null,
-          "verify_note": "Verificación manual: abrir el .mp4 exportado en otra app.",
+          "verify_note": "Manual verification: open the exported .mp4 in another app.",
           "status": "pending"
         },
         {
           "id": "2.5",
-          "title": "Persistencia local del proyecto",
+          "title": "Local project persistence",
           "depends_on": ["2.3"],
-          "description": "Guardar/retomar un proyecto (fotogramas + capas + metadata) en disco local, sin red. Un proyecto de stop motion son cientos de fotos — probar específicamente que cerrar y reabrir la app no pierde nada.",
-          "acceptance_criteria": "WHEN se cierra la app a mitad de una sesión de captura y se reabre THE SYSTEM SHALL restaurar el proyecto exactamente como quedó, fotograma por fotograma.",
+          "description": "Save/resume a project (frames + layers + metadata) on local disk, no network. A stop-motion project is hundreds of photos — specifically test that closing and reopening the app loses nothing.",
+          "acceptance_criteria": "WHEN the app is closed mid capture session and reopened THE SYSTEM SHALL restore the project exactly as it was, frame by frame.",
           "verify_command": null,
-          "verify_note": "Verificación manual en dispositivo — forzar el cierre de la app, no solo backgrounding.",
+          "verify_note": "Manual verification on device — force-quit the app, not just backgrounding.",
           "status": "pending"
         }
       ]
@@ -101,49 +101,49 @@
       "tasks": [
         {
           "id": "3.1",
-          "title": "Proyecto Firebase + Sign in with Apple",
+          "title": "Firebase project + Sign in with Apple",
           "depends_on": ["2.5"],
-          "description": "Alta del proyecto Firebase, Firebase Auth con Sign in with Apple como método principal (capacitor-firebase, plugins actuales verificados: messaging 8.3.0, analytics 8.3.0, firestore 8.1.0 — confirmar versión vigente al instalar).",
-          "acceptance_criteria": "WHEN el usuario toca 'Iniciar sesión con Apple' THE SYSTEM SHALL crear o recuperar su cuenta y dejarlo autenticado en Firebase Auth.",
+          "description": "Create the Firebase project, Firebase Auth with Sign in with Apple as the primary method (capacitor-firebase, current verified plugins: messaging 8.3.0, analytics 8.3.0, firestore 8.1.0 — confirm the current version at install time).",
+          "acceptance_criteria": "WHEN the user taps 'Sign in with Apple' THE SYSTEM SHALL create or recover their account and leave them authenticated in Firebase Auth.",
           "verify_command": null,
-          "verify_note": "Verificación manual en dispositivo — Sign in with Apple no funciona en todos los entornos de simulador.",
+          "verify_note": "Manual verification on device — Sign in with Apple doesn't work in every simulator environment.",
           "status": "pending"
         },
         {
           "id": "3.2",
-          "title": "Esquema de Firestore: users, projects, entitlements",
+          "title": "Firestore schema: users, projects, entitlements",
           "depends_on": ["3.1"],
-          "description": "Colecciones base y reglas de seguridad — cada usuario solo lee/escribe sus propios proyectos y su propio entitlement, nunca el de otro.",
-          "acceptance_criteria": "WHEN un usuario autenticado intenta leer el documento de entitlement de otro usuario THE SYSTEM SHALL denegar el acceso por las reglas de Firestore.",
+          "description": "Base collections and security rules — each user can only read/write their own projects and their own entitlement, never another user's.",
+          "acceptance_criteria": "WHEN an authenticated user tries to read another user's entitlement document THE SYSTEM SHALL deny access via Firestore rules.",
           "verify_command": "firebase emulators:exec --only firestore 'npm run test:rules'",
-          "verify_note": "Requiere haber escrito los tests de reglas con el emulador de Firestore antes de que este comando tenga sentido.",
+          "verify_note": "Requires the rules tests to already be written against the Firestore emulator before this command means anything.",
           "status": "pending"
         },
         {
           "id": "3.3",
-          "title": "Flujo de compra StoreKit 2 (cliente)",
+          "title": "StoreKit 2 purchase flow (client)",
           "depends_on": ["3.2"],
-          "description": "Pantalla de suscripción, integración StoreKit 2 nativa (o plugin Capacitor equivalente) para iniciar la compra y recibir la transacción.",
-          "acceptance_criteria": "WHEN el usuario completa una compra de sandbox THE SYSTEM SHALL recibir la transacción firmada por StoreKit del lado del cliente.",
+          "description": "Subscription screen, native StoreKit 2 integration (or equivalent Capacitor plugin) to start the purchase and receive the transaction.",
+          "acceptance_criteria": "WHEN the user completes a sandbox purchase THE SYSTEM SHALL receive the client-side transaction signed by StoreKit.",
           "verify_command": null,
-          "verify_note": "Verificación manual con una cuenta de sandbox de App Store Connect.",
+          "verify_note": "Manual verification with an App Store Connect sandbox account.",
           "status": "pending"
         },
         {
           "id": "3.4",
-          "title": "Cloud Function: validación de recibo → entitlement en Firestore",
+          "title": "Cloud Function: receipt validation → entitlement in Firestore",
           "depends_on": ["3.3"],
-          "description": "La transacción del cliente nunca se confía sola — la Cloud Function valida contra la App Store Server API y solo entonces escribe el entitlement.",
-          "acceptance_criteria": "WHEN se envía una transacción de sandbox válida a la Cloud Function THE SYSTEM SHALL escribir el entitlement en Firestore; WHEN se envía una transacción manipulada o falsa THE SYSTEM SHALL rechazarla sin escribir nada.",
+          "description": "The client transaction is never trusted alone — the Cloud Function validates against the App Store Server API and only then writes the entitlement.",
+          "acceptance_criteria": "WHEN a valid sandbox transaction is sent to the Cloud Function THE SYSTEM SHALL write the entitlement to Firestore; WHEN a tampered or fake transaction is sent THE SYSTEM SHALL reject it without writing anything.",
           "verify_command": "npm --prefix functions test",
           "status": "pending"
         },
         {
           "id": "3.5",
-          "title": "Gatear features premium detrás del entitlement",
+          "title": "Gate premium features behind the entitlement",
           "depends_on": ["3.4"],
-          "description": "Quitar marca de agua, habilitar capas extra y guardado en la nube solo si el entitlement de Firestore está activo.",
-          "acceptance_criteria": "WHEN el entitlement del usuario está activo THE SYSTEM SHALL exportar sin marca de agua; WHEN no lo está THE SYSTEM SHALL mantenerla.",
+          "description": "Remove the watermark, enable extra layers and cloud save only if the Firestore entitlement is active.",
+          "acceptance_criteria": "WHEN the user's entitlement is active THE SYSTEM SHALL export with no watermark; WHEN it isn't THE SYSTEM SHALL keep it.",
           "verify_command": "npm test",
           "status": "pending"
         }
@@ -151,126 +151,126 @@
     },
     {
       "id": "4",
-      "name": "Feed: publicar, ver, compartir externo",
+      "name": "Feed: publish, view, external sharing",
       "tasks": [
         {
           "id": "4.1",
-          "title": "Colección clips en Firestore + subida a Storage",
+          "title": "clips collection in Firestore + Storage upload",
           "depends_on": ["3.5"],
-          "description": "Pipeline de publicación: subir el .mp4 exportado a Firebase Storage, crear el documento en `clips` con la URL y metadata (autor, fecha, sin campos de likes/comentarios — no son parte del alcance de v1).",
-          "acceptance_criteria": "WHEN el usuario publica un clip THE SYSTEM SHALL crear un documento en `clips` cuya URL de video sea accesible públicamente.",
+          "description": "Publishing pipeline: upload the exported .mp4 to Firebase Storage, create the `clips` document with the URL and metadata (author, date, no likes/comments fields — not part of v1 scope).",
+          "acceptance_criteria": "WHEN the user publishes a clip THE SYSTEM SHALL create a `clips` document whose video URL is publicly accessible.",
           "verify_command": null,
-          "verify_note": "Verificación manual — confirmar que la URL resultante reproduce en un navegador aparte.",
+          "verify_note": "Manual verification — confirm the resulting URL plays back in a separate browser.",
           "status": "pending"
         },
         {
           "id": "4.2",
-          "title": "UI del feed: lista cronológica, reproducción",
+          "title": "Feed UI: chronological list, playback",
           "depends_on": ["4.1"],
-          "description": "Sin ranking ni algoritmo — orden cronológico simple, tal como se decidió en RUMBO.md.",
-          "acceptance_criteria": "WHEN se abre el feed THE SYSTEM SHALL mostrar los clips publicados ordenados del más reciente al más antiguo, reproducibles inline.",
+          "description": "No ranking, no algorithm — simple chronological order, as decided in RUMBO.md.",
+          "acceptance_criteria": "WHEN the feed is opened THE SYSTEM SHALL show published clips ordered newest to oldest, playable inline.",
           "verify_command": null,
-          "verify_note": "Verificación manual en dispositivo.",
+          "verify_note": "Manual verification on device.",
           "status": "pending"
         },
         {
           "id": "4.3",
-          "title": "Flujo de publicación desde la pantalla de export",
+          "title": "Publish flow from the export screen",
           "depends_on": ["4.2"],
-          "description": "Botón 'Publicar' junto al export, que dispara 4.1 sin que el usuario tenga que salir del flujo de exportar.",
-          "acceptance_criteria": "WHEN el usuario exporta y toca 'Publicar' THE SYSTEM SHALL completar la subida y mostrar el clip en el feed sin pasos adicionales.",
+          "description": "'Publish' button next to export, which triggers 4.1 without the user having to leave the export flow.",
+          "acceptance_criteria": "WHEN the user exports and taps 'Publish' THE SYSTEM SHALL complete the upload and show the clip in the feed with no extra steps.",
           "verify_command": null,
-          "verify_note": "Verificación manual.",
+          "verify_note": "Manual verification.",
           "status": "pending"
         },
         {
           "id": "4.4",
-          "title": "Share sheet nativo hacia redes externas",
+          "title": "Native share sheet to external networks",
           "depends_on": ["4.3"],
-          "description": "UIActivityViewController (vía el plugin Share de Capacitor) con el .mp4 y una descripción prellenada que incluye el hashtag de la app, apuntando a Instagram/TikTok/X/Threads/Facebook — sin integración de API por plataforma.",
-          "acceptance_criteria": "WHEN el usuario toca 'Compartir' THE SYSTEM SHALL abrir el share sheet nativo de iOS con el video adjunto y el hashtag ya escrito en el texto.",
+          "description": "UIActivityViewController (via Capacitor's Share plugin) with the .mp4 and a prefilled caption including the app's hashtag, targeting Instagram/TikTok/X/Threads/Facebook — no per-platform API integration.",
+          "acceptance_criteria": "WHEN the user taps 'Share' THE SYSTEM SHALL open the native iOS share sheet with the video attached and the hashtag already written in the text.",
           "verify_command": null,
-          "verify_note": "Verificación manual en dispositivo.",
+          "verify_note": "Manual verification on device.",
           "status": "pending"
         }
       ]
     },
     {
       "id": "5",
-      "name": "Reporte y moderación manual",
+      "name": "Reporting and manual moderation",
       "tasks": [
         {
           "id": "5.1",
-          "title": "Botón de reporte + colección reports",
+          "title": "Report button + reports collection",
           "depends_on": ["4.4"],
-          "description": "Cualquier clip del feed se puede reportar. El reporte guarda quién, cuál clip, y un motivo.",
-          "acceptance_criteria": "WHEN un usuario reporta un clip THE SYSTEM SHALL crear un documento en `reports` referenciando ese clip.",
+          "description": "Any clip in the feed can be reported. The report stores who, which clip, and a reason.",
+          "acceptance_criteria": "WHEN a user reports a clip THE SYSTEM SHALL create a `reports` document referencing that clip.",
           "verify_command": "npm test",
           "status": "pending"
         },
         {
           "id": "5.2",
-          "title": "Cloud Function: reporte → ocultar clip del feed",
+          "title": "Cloud Function: report → hide clip from feed",
           "depends_on": ["5.1"],
-          "description": "Al pasar un umbral de reportes (a definir, empezar conservador — 1 reporte es suficiente para ocultar mientras se revisa, no para borrar), el clip deja de aparecer en las consultas del feed sin borrarse todavía.",
-          "acceptance_criteria": "WHEN un clip alcanza el umbral de reportes THE SYSTEM SHALL excluirlo de la consulta que alimenta el feed público.",
+          "description": "Once a report threshold is crossed (to be defined, start conservative — 1 report is enough to hide while under review, not to delete), the clip stops appearing in feed queries without being deleted yet.",
+          "acceptance_criteria": "WHEN a clip reaches the report threshold THE SYSTEM SHALL exclude it from the query that feeds the public feed.",
           "verify_command": "npm --prefix functions test",
           "status": "pending"
         },
         {
           "id": "5.3",
-          "title": "Panel interno mínimo de revisión",
+          "title": "Minimal internal review panel",
           "depends_on": ["5.2"],
-          "description": "Página web simple, protegida por Firebase Auth con una lista blanca de administradores, para ver clips reportados y decidir: restaurar o borrar definitivamente. No es un producto — es lo mínimo para cumplir el requisito de Apple de poder actuar en 24 horas.",
-          "acceptance_criteria": "WHEN un administrador borra un clip reportado desde el panel THE SYSTEM SHALL eliminarlo de Firestore y de Storage, no solo ocultarlo.",
+          "description": "Simple web page, protected by Firebase Auth with an admin allowlist, to view reported clips and decide: restore or permanently delete. Not a product — the minimum needed to meet Apple's requirement of acting within 24 hours.",
+          "acceptance_criteria": "WHEN an admin deletes a reported clip from the panel THE SYSTEM SHALL remove it from Firestore and Storage, not just hide it.",
           "verify_command": null,
-          "verify_note": "Verificación manual.",
+          "verify_note": "Manual verification.",
           "status": "pending"
         }
       ]
     },
     {
       "id": "6",
-      "name": "Empaquetado y envío a revisión de Apple",
+      "name": "Packaging and submission for Apple review",
       "tasks": [
         {
           "id": "6.1",
-          "title": "Ficha de App Store Connect",
+          "title": "App Store Connect listing",
           "depends_on": ["5.3"],
-          "description": "Capturas, descripción, etiquetas de privacidad (Apple exige declarar qué datos se recolectan — cámara, fotos, contenido de usuario vía Firebase) coherentes con lo que la app hace de verdad.",
-          "acceptance_criteria": "WHEN se completa el formulario de privacidad de App Store Connect THE SYSTEM SHALL declarar cada tipo de dato que la app efectivamente recolecta, sin omisiones.",
+          "description": "Screenshots, description, privacy labels (Apple requires declaring what data is collected — camera, photos, user content via Firebase) consistent with what the app actually does.",
+          "acceptance_criteria": "WHEN the App Store Connect privacy form is completed THE SYSTEM SHALL declare every type of data the app actually collects, with no omissions.",
           "verify_command": null,
-          "verify_note": "Revisión manual contra el código: cámara, fotos, identificador de usuario, contenido generado.",
+          "verify_note": "Manual review against the code: camera, photos, user identifier, generated content.",
           "status": "pending"
         },
         {
           "id": "6.2",
-          "title": "Checklist de cumplimiento de guideline UGC",
+          "title": "UGC guideline compliance checklist",
           "depends_on": ["6.1"],
-          "description": "Confirmar explícitamente, antes de enviar, que reporte + bloqueo + baja en 24h (fase 5) están completos y documentados — es el motivo de rechazo más común para apps con feed.",
-          "acceptance_criteria": "WHEN se revisa el checklist de guideline 1.2 (UGC) de Apple THE SYSTEM SHALL tener evidencia de cada punto (reporte funcional, bloqueo funcional, proceso de baja documentado).",
+          "description": "Explicitly confirm, before submitting, that report + block + takedown within 24h (phase 5) are complete and documented — the most common rejection reason for apps with a feed.",
+          "acceptance_criteria": "WHEN Apple's guideline 1.2 (UGC) checklist is reviewed THE SYSTEM SHALL have evidence for every point (working report, working block, documented takedown process).",
           "verify_command": null,
-          "verify_note": "Revisión manual contra la guideline vigente de Apple al momento del envío — puede haber cambiado desde que se escribió este documento.",
+          "verify_note": "Manual review against Apple's current guideline at submission time — it may have changed since this document was written.",
           "status": "pending"
         },
         {
           "id": "6.3",
-          "title": "Build de TestFlight",
+          "title": "TestFlight build",
           "depends_on": ["6.2"],
-          "description": "Primer build firmado y subido a TestFlight, probado por al menos una persona ajena al desarrollo antes de enviar a revisión pública.",
-          "acceptance_criteria": "WHEN se instala el build desde TestFlight en un dispositivo distinto al de desarrollo THE SYSTEM SHALL correr sin crashear en el flujo completo: capturar, dibujar, exportar, publicar.",
+          "description": "First signed build uploaded to TestFlight, tested by at least one person outside the development before submitting for public review.",
+          "acceptance_criteria": "WHEN the TestFlight build is installed on a device other than the development one THE SYSTEM SHALL run without crashing through the full flow: capture, draw, export, publish.",
           "verify_command": null,
-          "verify_note": "Verificación manual, dispositivo ajeno.",
+          "verify_note": "Manual verification, external device.",
           "status": "pending"
         },
         {
           "id": "6.4",
-          "title": "Envío a revisión",
+          "title": "Submit for review",
           "depends_on": ["6.3"],
-          "description": "Envío formal a Apple. Este es el último paso del bundle — lo que pase después (rechazos, iteración) no está en este documento porque depende de la respuesta real de Apple.",
-          "acceptance_criteria": "WHEN se envía el build a revisión THE SYSTEM SHALL quedar en estado 'Waiting for Review' en App Store Connect.",
+          "description": "Formal submission to Apple. This is the last step of the bundle — what happens after (rejections, iteration) isn't in this document because it depends on Apple's actual response.",
+          "acceptance_criteria": "WHEN the build is submitted for review THE SYSTEM SHALL be in 'Waiting for Review' state in App Store Connect.",
           "verify_command": null,
-          "verify_note": "Confirmación manual en App Store Connect.",
+          "verify_note": "Manual confirmation in App Store Connect.",
           "status": "pending"
         }
       ]

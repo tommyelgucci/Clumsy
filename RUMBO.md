@@ -1,146 +1,142 @@
-# RUMBO — Hacia dónde va Clumsyloop y por qué en este orden
+# RUMBO — Where Clumsyloop is headed and why in this order
 
-Este documento es de estrategia, no de una función concreta. Explica las
-decisiones que ya se tomaron, el orden en que hay que construir, y las
-que quedaron abiertas a propósito.
+This document is strategy, not a concrete feature. It explains the
+decisions already made, the build order, and what was deliberately left
+open.
 
-## El diferenciador
+## The differentiator
 
-Stop Motion Studio domina el rubro desde hace más de una década — ~2000
-reseñas a 4.5★ solo en la vista que motivó este proyecto, cross-platform,
-bien monetizado. Competir de frente como "otra app de stop motion, pero
-más fácil" es una carrera de features contra alguien con diez años de
-ventaja puliendo exactamente eso. No es ese el plan.
+Stop Motion Studio has dominated the stop-motion niche for over a decade
+— ~2000 reviews at 4.5★ in the store listing that kicked off this
+project, cross-platform, well monetized. Competing head-on as "another
+stop-motion app, but easier" is a feature race against someone with a
+ten-year head start polishing exactly that. That's not the plan.
 
-**El ángulo es dibujo + cámara en la misma línea de tiempo.** Se
-comprobó — no se asumió — que ningún competidor serio hace esto:
-Procreate Dreams, la herramienta de animación profesional de referencia,
-exporta video (`.mp4`/`.mov`) o secuencia de imágenes crudas
-(`.png`/`.jpg`/`.tiff`), pero la secuencia cruda es explícitamente para
-llevarla a un compositor externo (After Effects), no para publicar. Ni
-siquiera Procreate Dreams construyó un feed propio — se apoya en las
-redes existentes con el hashtag `#procreatedreams`. Ninguna herramienta
-de este mercado trata "dibujar sobre stop motion" como su función
-central. Ese vacío es el producto.
+**The angle is drawing + camera on the same timeline.** It was verified
+— not assumed — that no serious competitor does this: Procreate Dreams,
+the reference professional animation tool, exports video (`.mp4`/`.mov`)
+or a raw image sequence (`.png`/`.jpg`/`.tiff`), but the raw sequence is
+explicitly meant to go to an external compositor (After Effects), not to
+be published. Not even Procreate Dreams built its own feed — it leans on
+existing networks via the `#procreatedreams` hashtag. No tool in this
+market treats "drawing over stop motion" as its core function. That gap
+is the product.
 
-**Consecuencia directa para el feed**: publica solo `.mp4`. La secuencia
-de fotos cruda puede existir como export para power users más adelante,
-pero no es contenido de feed — nadie en ningún lado de este mercado
-publica una carpeta de fotos sueltas para que otro la mire.
+**Direct consequence for the feed**: publish `.mp4` only. The raw photo
+sequence could exist as a power-user export down the line, but it isn't
+feed content — nobody in any corner of this market publishes a folder of
+loose photos for someone else to watch.
 
-## Las decisiones de plataforma, en el orden en que se cerraron
+## Platform decisions, in the order they were closed
 
-**1. Capacitor, no PWA pura.** Trace y Beautyapp son PWA porque no
-necesitan ni cámara de precisión ni monetización agresiva. Este proyecto
-necesita las dos cosas a la vez:
-- **Cámara**: `getUserMedia` del navegador no da control fino de
-  exposición/foco — para stop motion eso importa, es literalmente el
-  mecanismo central del producto.
-- **Descubrimiento y cobro**: el público (creadores de TikTok/Reels)
-  encuentra herramientas buscando en el App Store, no instalando una PWA
-  desde Safari. Y una suscripción vendida dentro de la app necesita
-  StoreKit — Apple exige IAP para contenido digital, Stripe directo
-  arriesga el rechazo en revisión.
+**1. Capacitor, not a pure PWA.** Trace and Beautyapp are PWAs because
+they need neither precision camera control nor aggressive monetization.
+This project needs both at once:
+- **Camera**: the browser's `getUserMedia` doesn't give fine-grained
+  exposure/focus control — for stop motion that matters, it's literally
+  the product's core mechanism.
+- **Discovery and billing**: the audience (TikTok/Reels creators) finds
+  tools by searching the App Store, not by installing a PWA from Safari.
+  And a subscription sold inside the app needs StoreKit — Apple requires
+  IAP for digital content, going straight to Stripe risks rejection in
+  review.
 
-El costo (US$99/año de membresía de desarrollador, ~15-30% de comisión de
-Apple) es barato comparado con perder cualquiera de esas dos cosas.
+The cost (US$99/year developer membership, ~15-30% Apple commission) is
+cheap compared to losing either of those two things.
 
-**2. Firebase, no Supabase.** La recomendación inicial fue Supabase
-(Postgres real, sin vendor lock-in, y ya conocido porque Dimel usa
-Postgres). Se optó por Firebase por la madurez de su integración de
-push notifications, particularmente pensando en una futura versión
-Android — aunque v1 es solo iOS, así que esa ventaja específica no se
-cobra todavía. Quedó anotado para no repetir el argumento si alguien
-pregunta "¿por qué no Supabase?" en seis meses: la razón no es el precio
-ni el modelo de datos, es notificaciones push a futuro.
+**2. Firebase, not Supabase.** The initial recommendation was Supabase
+(real Postgres, no vendor lock-in, and already familiar since Dimel uses
+Postgres). Firebase won out for the maturity of its push notification
+integration, specifically with a future Android version in mind — even
+though v1 is iOS-only, so that particular advantage isn't cashed in yet.
+Noted here so the argument doesn't need repeating if someone asks "why
+not Supabase?" in six months: the reason isn't price or the data model,
+it's future push notifications.
 
-**3. Solo iOS para el lanzamiento.** Capacitor comparte la mayoría del
-código entre iOS y Android, pero cada plataforma nueva es más superficie
-de testing — y el plugin nativo de cámara (ver abajo) hay que
-construirlo dos veces si se lanza en ambas. Un solo mercado bien resuelto
-antes de duplicar el trabajo.
+**3. iOS-only for launch.** Capacitor shares most of the code between
+iOS and Android, but every extra platform is more testing surface — and
+the native camera plugin (see below) has to be built twice if launched
+on both. One well-solved market before duplicating the work.
 
-**4. Moderación manual en v1.** Apple exige reporte + bloqueo + baja en
-24h para cualquier app con contenido de usuarios — eso no es negociable,
-está en el alcance desde el día uno. Lo que sí se pospuso es la
-moderación **automática** (una API tipo Cloud Vision): sin tráfico real
-no hay con qué calibrarla, y construirla antes de tener el primer
-reporte real es resolver un problema que todavía no existe.
+**4. Manual moderation in v1.** Apple requires report + block + takedown
+within 24h for any app with user content — that's non-negotiable, it's
+in scope from day one. What got deferred is **automated** moderation (a
+Cloud Vision-style API): without real traffic there's nothing to
+calibrate it against, and building it before the first real report is
+solving a problem that doesn't exist yet.
 
-**5. Pinceles y paletas se portan de Trace tal cual, no se rediseñan.**
-`core/brush.ts` (20 presets en 5 categorías: boceto, tinta, pintura,
-textura, borrador — con generación de estampas y el filtro One Euro) y
-el sistema de paletas de `state/store.ts` (`PaletteGroup` fijas +
-`UserPalette` del usuario) ya están pulidos y probados en producción.
-Beautyapp ya validó que `brush.ts` se porta bien a otro proyecto — su
-`StrokeBuilder` de retoque nace de la misma base. Rehacerlos de cero
-para Clumsyloop tiraría trabajo terminado a la basura sin ganar nada:
-a diferencia del resto del motor, estas dos piezas no tienen ninguna
-relación con cámara ni con monetización, así que no necesitan la
-adaptación que sí le hace falta a `document.ts`/`engine.ts`.
+**5. Brushes and palettes port from Trace as-is, not redesigned.**
+`core/brush.ts` (20 presets across 5 categories: sketch, ink, paint,
+texture, eraser — with stamp generation and the One Euro filter) and the
+palette system in `state/store.ts` (fixed `PaletteGroup`s + user
+`UserPalette`) are already polished and production-tested. Beautyapp
+already validated that `brush.ts` ports well to another project — its
+retouch `StrokeBuilder` is built on that same base. Rebuilding them from
+scratch for Clumsyloop would throw away finished work for no gain:
+unlike the rest of the engine, these two pieces have nothing to do with
+the camera or monetization, so they don't need the adaptation
+`document.ts`/`engine.ts` do.
 
-## El riesgo técnico que va primero
+## The technical risk that goes first
 
-**El plugin nativo de cámara no es un detalle de implementación, es el
-riesgo que puede tumbar el proyecto entero.** El plugin estándar de
-Capacitor solo toma una foto suelta; stop motion necesita bloquear
-exposición, foco y balance de blancos fotograma a fotograma — si no se
-resuelve bien, cada foto se re-expone sola y la secuencia final
-parpadea, que es exactamente el problema que un stop-motion serio no
-puede tener. Por eso las fases de construcción empiezan ahí y no por lo
-fácil (la UI, el feed): si el plugin de cámara no se puede lograr con la
-fidelidad necesaria, el resto del plan no importa.
+**The native camera plugin isn't an implementation detail, it's the risk
+that can sink the whole project.** Capacitor's stock plugin only takes a
+single photo; stop motion needs to lock exposure, focus, and white
+balance frame to frame — if this isn't solved well, every photo
+re-exposes on its own and the final sequence flickers, which is exactly
+the problem a serious stop-motion tool can't have. That's why the build
+phases start there instead of with the easy part (the UI, the feed): if
+the camera plugin can't hit the necessary fidelity, the rest of the plan
+doesn't matter.
 
-## Fases de construcción
+## Build phases
 
-1. **Prototipo del plugin de cámara** (AVFoundation vía Capacitor) — el
-   riesgo real, se valida primero, en dispositivo físico.
-2. **Motor de captura + dibujo local**, sin nube — el producto tiene que
-   funcionar completo offline antes de sumar backend.
-3. **Firebase**: auth (Sign in with Apple) + entitlements + validación de
-   recibos de StoreKit vía Cloud Function.
-4. **Feed**: publicar, ver, compartir externo (share sheet nativo).
-5. **Reporte y moderación manual** — requisito de Apple, no se puede
-   saltar para llegar antes a revisión.
-6. **Empaquetado y envío a revisión de Apple.**
+1. **Camera plugin prototype** (AVFoundation via Capacitor) — the real
+   risk, validated first, on a physical device.
+2. **Local capture + drawing engine**, no cloud — the product has to
+   work fully offline before adding a backend.
+3. **Firebase**: auth (Sign in with Apple) + entitlements + StoreKit
+   receipt validation via Cloud Function.
+4. **Feed**: publish, view, external sharing (native share sheet).
+5. **Reporting and manual moderation** — an Apple requirement, can't be
+   skipped to reach review sooner.
+6. **Packaging and submission for Apple review.**
 
-## Modelo de negocio
+## Business model
 
-Freemium: marca de agua y resolución limitada en el plan gratis,
-suscripción para export limpio, más capas, y guardado en la nube. La
-nube no es un lujo acá — un proyecto de stop motion son cientos de fotos,
-y perder ese trabajo porque el iPad se quedó sin espacio es el tipo de
-frustración que genera baja, no solo una carencia de feature.
+Freemium: watermark and limited resolution on the free plan,
+subscription for clean export, more layers, and cloud save. The cloud
+isn't a luxury here — a stop-motion project is hundreds of photos, and
+losing that work because the iPad ran out of space is the kind of
+frustration that causes churn, not just a missing feature.
 
-## El nombre
+## The name
 
-**Clumsyloop.** Salió después de varias rondas de nombres descartados —
-"motion"/"anima" como prefijo suena a herramienta de trabajo, no a algo
-que alguien de 16-20 años quiere ver al lado de TikTok en su pantalla de
-inicio; "blob"/"clumsy" solos están saturados en el App Store (ocho apps
-distintas usan "Clumsy" como palabra suelta: Clumsy Ninja, Clumsy Cat,
-Clumsy Bomb, entre otras); "sweesh" quedó descartado por el parecido
-fonético con "Swoosh", el logo registrado de Nike — riesgo legal real
-para un proyecto sin presupuesto de abogado, aunque no hubiera choque
-exacto registrado.
+**Clumsyloop.** It came after several discarded rounds of names —
+"motion"/"anima" as a prefix sounds like a work tool, not something a
+16-20 year-old wants next to TikTok on their home screen; "blob"/"clumsy"
+alone are saturated on the App Store (eight different apps use "Clumsy"
+as a standalone word: Clumsy Ninja, Clumsy Cat, Clumsy Bomb, among
+others); "sweesh" got dropped for its phonetic closeness to "Swoosh,"
+Nike's registered mark — a real legal risk for a project with no legal
+budget, even without an exact registered clash.
 
-"Clumsyloop" sobrevivió la verificación (sin choque de app ni de marca
-para el compuesto exacto) y es el único nombre de toda la ronda que
-**cuenta algo del producto** en vez de solo describirlo: "clumsy" es
-justo el encanto de una animación hecha a mano — nada queda perfecto, y
-eso es lo que la hace compartible en vez de una animación de estudio — y
-"loop" es literal a lo que produce la app.
+"Clumsyloop" survived the check (no app or trademark clash for the exact
+compound) and is the only name from the whole round that **says
+something about the product** instead of just describing it: "clumsy" is
+exactly the charm of handmade animation — nothing stays perfect, and
+that's what makes it shareable instead of studio animation — and "loop"
+is literally what the app produces.
 
-## Deudas conocidas / riesgos que quedan abiertos
+## Known debts / risks left open
 
-- **La moderación manual no escala.** El día que haya tráfico real, un
-  solo panel interno revisado a mano se va a quedar corto. No es
-  problema de v1, pero conviene no olvidarlo — ver la sección de fases,
-  punto 5.
-- **Sin Android desde el día uno** significa sin ese mercado hasta que se
-  decida abrirlo — la decisión de negocio, no la técnica, es la que
-  determina cuándo.
-- **El plugin nativo de cámara es la apuesta más grande del proyecto** y
-  todavía no está prototipado. Todo lo demás en este documento asume que
-  funciona; si no funciona con la fidelidad necesaria, este plan hay que
-  revisarlo desde la fase 1.
+- **Manual moderation doesn't scale.** The day there's real traffic, a
+  single internal panel reviewed by hand will fall short. Not a v1
+  problem, but worth not forgetting — see the phases section, point 5.
+- **No Android from day one** means no access to that market until it's
+  decided to open it — a business decision, not a technical one,
+  determines when.
+- **The native camera plugin is the project's biggest bet** and hasn't
+  been prototyped yet. Everything else in this document assumes it
+  works; if it doesn't hit the necessary fidelity, this plan needs
+  revisiting starting from phase 1.
