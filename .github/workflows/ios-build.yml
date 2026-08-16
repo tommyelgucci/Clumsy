@@ -1,5 +1,9 @@
 name: iOS build check
 
+# Re-triggered after enabling Actions on the repo (2026-08-16) — the
+# original push predated that setting and GitHub doesn't retroactively
+# evaluate it.
+#
 # Compile-only safety net: confirms the Swift/Obj-C in ios/App/App
 # (CameraCapturePlugin in particular) actually builds. It does NOT
 # validate camera behavior — the simulator destination has no real
