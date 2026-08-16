@@ -1,5 +1,30 @@
 # Checkpoint — Progress log
 
+### 2026-08-16 (even later) — Evaluated four external repos for inspiration/reuse
+
+Owner asked to check whether easings.net, open-brush, UPNG.js, and
+ccapture.js were CC0 or permissive enough to pull ideas or code from.
+Checked actual LICENSE files (not from memory): easings.net is
+GPL-3.0 — dropped entirely, no further consideration, and its Penner
+easing curves don't need porting from anywhere anyway (they're
+standard 1-3 line formulas with no protectable expression; write them
+fresh in `core/math.ts` whenever a specific tweened feature — a dialogue
+bubble entrance, an effect fade — actually needs one, not before).
+open-brush (Apache-2.0), UPNG.js (MIT), and ccapture.js (MIT) are all
+genuinely permissive.
+
+Of those three, only UPNG.js has concrete near-term value — noted in
+`RUMBO.md` as the library for task 2.5 (local persistence, thumbnails)
+or a future raw-sequence export. ccapture.js's actual code doesn't
+port (it targets canvas capture in-browser, not this project's
+AVFoundation export path), but its GPU motion-blur-accumulation
+technique is worth keeping as a named v2+ feature idea, also noted in
+`RUMBO.md`. open-brush yielded nothing concrete — Unity/C# 3D VR
+painting tool, wrong stack, and the brush system is already solved via
+the direct port from Trace — discarded, no note needed.
+
+---
+
 ### 2026-08-16 (later still) — Task 1.3: exposure/focus/white-balance lock
 
 Added `lockCaptureSettings()`/`unlockCaptureSettings()` to
