@@ -15,8 +15,8 @@
           "description": "React 19.2.8 + TypeScript + Vite 8.0.9 + Zustand 5.0.15, wrapped in Capacitor 8.5 (adopts UIScene). Add the iOS platform. Check the TypeScript version with `npm view typescript version` at install time — deliberately unpinned in this document, resolved in the moment.",
           "acceptance_criteria": "WHEN `npx cap open ios` is run and the app is built on a physical device THE SYSTEM SHALL show the app's blank screen with no native build errors.",
           "verify_command": "npm run build && npx cap sync ios",
-          "verify_note": "The Xcode build itself is confirmed by opening the project and running on a device — there's no way to automate that part with a command that exits 0.",
-          "status": "pending"
+          "verify_note": "The Xcode build itself is confirmed by opening the project and running on a device — there's no way to automate that part with a command that exits 0. Automated part (verify_command) passes as of 2026-08-16; opening in Xcode and running on hardware is still open, no device access from this environment.",
+          "status": "in_progress"
         },
         {
           "id": "1.2",
@@ -25,8 +25,8 @@
           "description": "Custom Capacitor plugin (Swift) that wraps AVFoundation directly — not `@capacitor/camera`. Just the capture session and one call that takes a photo without fine control yet; it's the scaffolding, not the full functionality.",
           "acceptance_criteria": "WHEN the plugin method is called from JS THE SYSTEM SHALL return an image captured by AVFoundation, visible in the app.",
           "verify_command": null,
-          "verify_note": "Manual verification on a physical device — mandatory, the simulator has no real camera (see CLAUDE.md).",
-          "status": "pending"
+          "verify_note": "Manual verification on a physical device — mandatory, the simulator has no real camera (see CLAUDE.md). Code written as of 2026-08-16 (CameraCapturePlugin.swift/.m + the JS wrapper and a manual test button in App.tsx) but not yet built or run on hardware — no Xcode/device access from this environment.",
+          "status": "in_progress"
         },
         {
           "id": "1.3",

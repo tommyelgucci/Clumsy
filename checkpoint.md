@@ -1,5 +1,40 @@
 # Checkpoint — Progress log
 
+### 2026-08-16 (later) — Task 1.2: native camera plugin skeleton written
+
+Wrote the custom Capacitor plugin from task 1.2: `CameraCapturePlugin.swift`
+wraps AVFoundation directly (own `AVCaptureSession` + `AVCapturePhotoOutput`,
+requests camera permission, lazily configures the session on first call),
+registered the classic way with a `CameraCapturePlugin.m` bridge file using
+the `CAP_PLUGIN`/`CAP_PLUGIN_METHOD` macros — chosen over the newer
+`CAPBridgedPlugin` self-registration protocol because it's the
+better-documented, lower-risk path when there's no way to build and test
+locally in this environment. Added both files to `App.xcodeproj/project.pbxproj`
+by hand (file references + Sources build phase entries) since the project
+uses classic explicit file references, not Xcode 16's file-system-synced
+groups — new files on disk wouldn't otherwise get compiled. Added
+`NSCameraUsageDescription` to `Info.plist`, without which the app would
+crash on first camera access instead of prompting.
+
+On the JS side: `src/native/cameraCapture.ts` wraps it with
+`registerPlugin`, and `App.tsx` got a temporary manual test harness (a
+"Capture photo" button that renders the returned image) — not the real
+capture UI, just enough surface to verify 1.2's acceptance criteria by
+hand. `capturePhoto()` still takes one auto-exposed photo with no
+frame-to-frame lock; that's exactly task 1.3, the one that decides if the
+project's technical bet pays off.
+
+**Everything here is unverified beyond `tsc`/`vite build`/`cap sync`** —
+this environment has no macOS/Xcode, so the Swift half of this has never
+actually compiled. Marked both 1.1 and 1.2 `in_progress` in `tasks.json`
+rather than `pending` (code exists) or a false `done` (hardware
+verification, which each task's own acceptance criteria requires, hasn't
+happened). Opening `ios/App/App.xcodeproj` in Xcode (no `.xcworkspace` — this
+project uses Swift Package Manager, not CocoaPods) and running on a
+physical device is the real next step before touching 1.3.
+
+---
+
 ### 2026-08-16 — Project switched to English; task 1.1 scaffold done
 
 The owner decided the whole project — code, docs, commits, everything —
