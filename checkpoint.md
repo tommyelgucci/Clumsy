@@ -1,5 +1,56 @@
 # Checkpoint — Progress log
 
+### 2026-08-16 (later once more) — Ported brush.ts, brushTexture.ts, and the palette system directly
+
+The one explicit exception in `CLAUDE.md`: unlike `document.ts`, these
+port as-is, no redesign — they have nothing to do with the camera or
+monetization. Not tied to a `tasks.json` line item (that document only
+lists 2.1-2.5; brushes/palettes are the standalone exception `CLAUDE.md`/
+`RUMBO.md` call out), so nothing there changed — this is groundwork for
+whichever future task actually builds the drawing UI.
+
+`src/core/brushTexture.ts` (procedural stamp-texture generators: grain,
+chalk, canvas, splatter, flat, plus parametric/streak/wisp/burst/rake/
+cluster generators for a future custom-brush editor) and
+`src/core/brush.ts` (`DEFAULT_BRUSHES` — 23 presets across the 5
+categories, `StrokeBuilder`, `taperScale`) ported close to verbatim from
+`tommyelgucci/Draw`, comments and preset names translated to English,
+every numeric value and all logic untouched. `CustomTexture` (imported
+brush textures) came along with `brushTexture.ts` since it's part of the
+same file, but isn't wired into `ClumsyloopDocument` yet — that document
+type deliberately dropped `customTextures` in the 2.1 pass as out of v1
+scope, so this sits unused until/unless a future task decides to support
+custom texture import.
+
+The palette system went into a new `src/state/palettes.ts` rather than a
+full port of Trace's `state/store.ts` — that file mixes palettes with
+tool selection, panels, quick-shape settings, rig/IK state, none of which
+exists yet for Clumsyloop (that's task 2.3, the capture UI, not built).
+Ported `PaletteGroup`/`UserPalette`, the 16 curated palettes (same color
+data — same owner across both repos, so this is moving their own
+creative judgment between their own projects, not a licensing question),
+and the `localStorage`-backed CRUD as a standalone Zustand store
+(`usePalettes`). Storage key renamed to `clumsyloop:palettes`.
+
+Added test coverage Trace itself doesn't have for these files (it relies
+on Playwright visual scripts instead) — `brush.test.ts` (preset sanity,
+`taperScale` bounds, `StrokeBuilder` basics),
+`brushTexture.test.ts` (determinism, buffer sizing, non-empty coverage
+per built-in texture), `palettes.test.ts` (palette-group data sanity,
+full CRUD). `usePalettes`'s tests run without a real `localStorage` (not
+available under `node --test`) — `loadUserPalettes`/`saveUserPalettes`
+already catch that and degrade to an empty list, by design, so only
+persistence itself goes untested here, not the state transitions.
+`npm test`'s glob extended to also pick up `src/state/*.test.ts`.
+
+`npm test` 111/111, `npm run lint` and `npm run build` clean. One real
+bug caught by the new tests, not a port error: my own first draft of
+`begin() with a single tap...` in `brush.test.ts` assumed the stamp
+lands exactly on the tap point, forgetting the default pencil preset has
+`scatter: 0.05` — fixed the test (explicit `scatter: 0`), not the code.
+
+---
+
 ### 2026-08-16 (later still again) — Task 2.1: ported and trimmed core/ from Trace
 
 Owner asked to look at what could start now, easiest to hardest, rather
