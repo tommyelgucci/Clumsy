@@ -51,7 +51,8 @@
           "description": "types.ts, math.ts, document.ts, history.ts — same layered design as Trace (no DOM, no React), but a Cel can now originate from a captured photo as well as a drawn stroke.",
           "acceptance_criteria": "WHEN the engine test suite runs THE SYSTEM SHALL pass with no failures, including a test confirming a camera Cel and a drawn Cel share the same compositing interface.",
           "verify_command": "npm test",
-          "status": "pending"
+          "verify_note": "Passes as of 2026-08-16 (82/82). Built ahead of 1.3's device verification on explicit owner instruction (\"start what you can now, easiest to hardest\") — this task doesn't touch native code or WebGL, so it isn't at risk from a camera-plugin rethink the way 2.2+ would be. Trimmed from Trace's document.ts on purpose, not by oversight: no rig/skeleton, sprite-swap, text layers, adjustment layers, layer masks, layer groups, or audio track — none are in Clumsyloop's v1 scope (see CLAUDE.md). LayerKind is 'camera' | 'draw' instead of Trace's 'draw' | 'reference' | 'adjustment' — that split is the actual product differentiator.",
+          "status": "done"
         },
         {
           "id": "2.2",
