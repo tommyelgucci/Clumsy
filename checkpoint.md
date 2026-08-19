@@ -1,5 +1,136 @@
 # Checkpoint — Progress log
 
+### 2026-08-16 (later once more) — Ported brush.ts, brushTexture.ts, and the palette system directly
+
+The one explicit exception in `CLAUDE.md`: unlike `document.ts`, these
+port as-is, no redesign — they have nothing to do with the camera or
+monetization. Not tied to a `tasks.json` line item (that document only
+lists 2.1-2.5; brushes/palettes are the standalone exception `CLAUDE.md`/
+`RUMBO.md` call out), so nothing there changed — this is groundwork for
+whichever future task actually builds the drawing UI.
+
+`src/core/brushTexture.ts` (procedural stamp-texture generators: grain,
+chalk, canvas, splatter, flat, plus parametric/streak/wisp/burst/rake/
+cluster generators for a future custom-brush editor) and
+`src/core/brush.ts` (`DEFAULT_BRUSHES` — 23 presets across the 5
+categories, `StrokeBuilder`, `taperScale`) ported close to verbatim from
+`tommyelgucci/Draw`, comments and preset names translated to English,
+every numeric value and all logic untouched. `CustomTexture` (imported
+brush textures) came along with `brushTexture.ts` since it's part of the
+same file, but isn't wired into `ClumsyloopDocument` yet — that document
+type deliberately dropped `customTextures` in the 2.1 pass as out of v1
+scope, so this sits unused until/unless a future task decides to support
+custom texture import.
+
+The palette system went into a new `src/state/palettes.ts` rather than a
+full port of Trace's `state/store.ts` — that file mixes palettes with
+tool selection, panels, quick-shape settings, rig/IK state, none of which
+exists yet for Clumsyloop (that's task 2.3, the capture UI, not built).
+Ported `PaletteGroup`/`UserPalette`, the 16 curated palettes (same color
+data — same owner across both repos, so this is moving their own
+creative judgment between their own projects, not a licensing question),
+and the `localStorage`-backed CRUD as a standalone Zustand store
+(`usePalettes`). Storage key renamed to `clumsyloop:palettes`.
+
+Added test coverage Trace itself doesn't have for these files (it relies
+on Playwright visual scripts instead) — `brush.test.ts` (preset sanity,
+`taperScale` bounds, `StrokeBuilder` basics),
+`brushTexture.test.ts` (determinism, buffer sizing, non-empty coverage
+per built-in texture), `palettes.test.ts` (palette-group data sanity,
+full CRUD). `usePalettes`'s tests run without a real `localStorage` (not
+available under `node --test`) — `loadUserPalettes`/`saveUserPalettes`
+already catch that and degrade to an empty list, by design, so only
+persistence itself goes untested here, not the state transitions.
+`npm test`'s glob extended to also pick up `src/state/*.test.ts`.
+
+`npm test` 111/111, `npm run lint` and `npm run build` clean. One real
+bug caught by the new tests, not a port error: my own first draft of
+`begin() with a single tap...` in `brush.test.ts` assumed the stamp
+lands exactly on the tap point, forgetting the default pencil preset has
+`scatter: 0.05` — fixed the test (explicit `scatter: 0`), not the code.
+
+---
+
+### 2026-08-16 (later still again) — Task 2.1: ported and trimmed core/ from Trace
+
+Owner asked to look at what could start now, easiest to hardest, rather
+than wait on phase 1's device verification. Task 2.1 was the answer:
+`types.ts`/`math.ts`/`document.ts`/`history.ts` are pure TypeScript, no
+DOM, no native code — nothing about them depends on whether the camera
+lock turns out to flicker-free on a device, so building them now doesn't
+risk the kind of wasted work RUMBO.md warns about for the rest of the
+engine.
+
+Ported from `tommyelgucci/Draw` (Trace), which is in this session's repo
+scope, so this was a real port from the actual source, not a guess at
+what Trace looks like. `types.ts` and `math.ts` ported close to verbatim
+(comments translated to English) — they're generic engine plumbing with
+no Clumsyloop-specific shape. `document.ts` did **not** port 1:1 on
+purpose: Trace's version (468 lines) carries a lot that's out of
+Clumsyloop's v1 scope per `CLAUDE.md` — bone rigs/skeletons, sprite-swap
+catalogs for lip sync, text layers, adjustment layers, layer masks, layer
+folders, an audio track. All cut, not forgotten — porting them would
+throw work at features the owner explicitly excluded from v1. What did
+change on purpose, not just trim: `LayerKind` is `'camera' | 'draw'`
+instead of Trace's `'draw' | 'reference' | 'adjustment'` — a camera layer
+holds the stop-motion photo sequence, a draw layer holds hand-drawn cels
+(rotoscoping, effects, dialogue bubbles, backgrounds), and that split is
+Clumsyloop's actual differentiator, not Trace's. Kept the
+`Channel`/keyframe/easing system from Trace's `TransformTrack`, since
+effects and dialogue bubbles plausibly need to animate in/out — unlike
+Trace, this isn't for rigged character motion here. Default document size
+also changed from Trace's 1920x1080 (landscape, tablet drawing tool) to
+1080x1920 (vertical, matching the TikTok/Reels audience `CLAUDE.md`
+describes). `history.ts` ported with one piece deferred: Trace's
+`Command.op` field (lets some undo steps rebuild from a saved `.trace` on
+load) depends on `historyOps.ts`/`io.ts`, which is task 2.5 (local
+persistence) — not built yet, so `op` isn't there yet either.
+
+`gl/renderer.ts` got a minimal `Surface` type stub — just enough for
+`document.ts`'s type-only dependency (a Cel holds a Surface) to compile.
+The actual WebGL2 implementation is task 2.2, untouched here.
+
+Set up test infra mirroring Trace's exactly: Node's native test runner
+via `node --test`, with the same `ts-extension-resolve.mjs` resolution
+hook (Node's ESM loader needs the `.ts` extension on relative imports;
+the rest of the codebase omits it, bundler-resolution style, so this
+hook falls back to trying `.ts` when normal resolution fails). Added
+`src/**/*.test.ts` to `tsconfig.app.json`'s exclude, same as Trace, so
+`tsc -b` doesn't need `@types/node` just to build the app.
+
+`npm test` passes 82/82 (30 in math.test.ts, 41 in document.test.ts
+including the camera-cel/drawn-cel compositing test task 2.1's acceptance
+criteria calls for by name, 11 in a new history.test.ts — Trace's
+history.ts has no test file to port from, so these are new). `npm run
+lint` and `npm run build` also pass clean.
+
+**Marked 2.1 `done`** in `tasks.json`, ahead of `depends_on: 1.3` actually
+being verified — a deliberate exception on the owner's explicit
+instruction, not an oversight of the project's own ordering rule. Flagged
+in the task's `verify_note`: this specific task is low-risk to have
+built early since it's native/WebGL-free, unlike 2.2 onward.
+
+---
+
+### 2026-08-16 (later again) — Removed the GitHub Pages preview
+
+Owner tried it (confirmed both the UI loading and the expected
+"not implemented" behavior on the camera buttons) and decided it wasn't
+worth keeping — it only ever proved the web build compiles, which the
+`ios-build.yml` CI job and local `npm run build` already cover. Removed
+`.github/workflows/deploy-pages.yml` and the `GITHUB_PAGES`-conditional
+`base` in `vite.config.ts` that existed only for it. `ios-build.yml`
+(the actual useful one — compiles the Swift/Obj-C on every push and PR)
+stays.
+
+**Left over, not cleaned up here**: the `github-pages` deployment
+environment and the Pages "Source: GitHub Actions" setting are still
+configured on GitHub itself — nothing in this repo can undo that, it's
+a Settings → Pages change the owner would make by hand if they want it
+fully gone, not just unused.
+
+---
+
 ### 2026-08-16 (yet later) — GitHub Pages preview + an iOS compile-check CI job
 
 Owner asked to try GitHub Pages to test the app. Flagged upfront that
