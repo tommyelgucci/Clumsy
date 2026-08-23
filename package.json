@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "node --import ./scripts/register-ts-loader.mjs --test src/core/*.test.ts src/state/*.test.ts",
+    "test:composite": "node scripts/composite-check.mjs",
     "cap:sync": "cap sync ios",
     "cap:open": "cap open ios"
   },
@@ -29,6 +30,7 @@
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.16",
     "globals": "^15.14.0",
+    "playwright": "^1.62.1",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.19.0",
     "vite": "^8.0.9"

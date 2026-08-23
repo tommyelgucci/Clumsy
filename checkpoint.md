@@ -1,5 +1,94 @@
 # Checkpoint — Progress log
 
+### 2026-08-20 — Task 2.2: WebGL2 compositing renderer, verified with a real pixel-reading browser check
+
+Next unblocked task per `tasks.json`'s dependency graph now that 2.1 is
+done — still camera-independent, so it doesn't need to wait on phase 1's
+device verification either.
+
+Wrote `gl/shaders.ts` (GLSL ES 3.00: `QUAD_VS`, `COMPOSITE_FS` with the 13
+W3C separable blend modes indexed to match `BLEND_INDEX` in `core/types.ts`,
+`PRESENT_FS` for the paper/checkerboard screen pass) and replaced the
+`gl/renderer.ts` stub with a real `Renderer` class: `createSurface`,
+`uploadImage` (premultiplies on the way in via
+`UNPACK_PREMULTIPLY_ALPHA_WEBGL`), `composite` (`dst = blend(backdrop,
+src)`), `copy` (implemented as a `composite` against an always-transparent
+scratch backdrop rather than a second shader — with `bd.a = 0`,
+`COMPOSITE_FS`'s formula collapses exactly to `src * opacity`, so there's
+only one blend formula to keep correct instead of two), and
+`renderDocument(doc, frame)`, which walks `buildClipGroups` bottom to top:
+each group's clipped layers composite against their own base (not the
+whole picture below — that's what `clipToBelow` means), then the group
+merges into the main accumulator using the base layer's own opacity and
+blend mode. Ping-pongs between named scratch surfaces to satisfy WebGL2's
+"can't read and write the same texture in one pass" rule, same reason
+Trace's `composite()` needs three distinct surfaces.
+
+Trimmed from Trace's renderer on purpose, same criterion 2.1 used for
+`document.ts`: no brush-stamp shader (stroke drawing is a later,
+not-yet-itemized task, not this one), no texture-residency eviction pool
+(Trace needs it so hundreds of cels don't blow an iPad's memory budget;
+nothing here needs that before task 2.5's persistence exists — every
+`Surface` just stays GPU-resident), no mesh skinning, HSV adjustment
+layers, pigment-mix stroke blending, or selection outline — none of those
+exist in this project's v1 `document.ts`. Also, deliberately, no per-layer
+transform (position/scale/rotation) applied during compositing yet:
+`TransformTrack` stays on `Layer` for future keyframed effects/dialogue
+bubbles, but task 2.2's acceptance criteria only asks for two cels
+composited correctly, and applying transforms to compositing is separable
+work for whenever something actually needs to move around the canvas.
+
+**Verification is the part worth noting.** `node --test` can't touch
+WebGL (no DOM/GPU in Node), so — matching Trace's own precedent of
+Playwright scripts over unit tests for `gl/` — wrote
+`scripts/composite-check.mjs` (new `npm run test:composite`): launches the
+real dev server, drives Chromium under SwiftShare software rendering
+(`--use-angle=swiftshader` — this environment has no GPU), and reads
+pixels back with `gl.readPixels` rather than just eyeballing a screenshot.
+Built a small manual test harness in `App.tsx` (`RendererHarness`,
+alongside the existing task 1.2/1.3 camera harness, not replacing it) that
+composites a synthetic four-color-quadrant "photo" (camera layer) with a
+soft-edged semi-transparent white circle on top (drawn layer) and exposes
+`window.__clumsy` for the script to poke at — same pattern as Trace's
+`window.__trace`.
+
+The check caught two real bugs before going green, not code-review
+guesses: (1) reading the canvas's default framebuffer via `readPixels`
+*after* control had returned to the event loop came back solid black —
+`preserveDrawingBuffer: false` lets the browser clear the drawing buffer
+once it's been presented to the compositor, so the fix was calling
+`render()` and reading back within the same script turn, not a renderer
+bug; (2) the console-error filter for the page's harmless favicon-404 was
+matching on `favicon.ico` in the message text, but Chromium's
+`console.text()` for a resource-load failure doesn't include the URL —
+switched the filter to the message's generic wording instead. Confirmed:
+quadrant orientation (top-left red stays top-left — this is what would
+catch a Y-flip or transposed-axis bug), the screen present matches that
+same orientation (proves the single flip lands correctly, not zero or
+two), every partial-alpha edge pixel of the uploaded drawing is correctly
+premultiplied (`r=g=b=a` for a pure-white source — catches a missing
+`UNPACK_PREMULTIPLY_ALPHA_WEBGL` on upload, which a flat-color halo check
+alone can't: for a single-hue gradient, forgetting to premultiply on
+upload and then unpremultiplying in the shader mathematically cancels out
+in the final composited color, so it has to be caught by reading the
+surface's own texture directly, not by eyeballing the composited result),
+all 13 blend modes render without throwing, and `clipToBelow` doesn't
+break. Screenshot saved to confirm by eye too: four correctly-oriented
+quadrants, the circle blending smoothly with no dark fringing at its edge.
+
+Added `playwright` as a devDependency (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`
+at install time — this environment already has Chromium at
+`/opt/pw-browsers`, no need to fetch another copy). `npm run build`, `npm
+run lint`, and `npm test` (111/111, unaffected) all still pass. **Marked
+2.2 `done`** — this is real browser-level pixel verification, a stronger
+bar than what task 2.1 could get (`node --test` only), though it's still
+SwiftShader software rendering in a script, not a real iOS WKWebView on a
+physical device; the blend/premultiplication math is the same WebGL2 spec
+everywhere, but CLAUDE.md is explicit that device verification is what
+makes any WebGL work actually final.
+
+---
+
 ### 2026-08-16 (later once more) — Ported brush.ts, brushTexture.ts, and the palette system directly
 
 The one explicit exception in `CLAUDE.md`: unlike `document.ts`, these
