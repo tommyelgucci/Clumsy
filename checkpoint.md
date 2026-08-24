@@ -1,5 +1,68 @@
 # Checkpoint — Progress log
 
+### 2026-08-20 (later) — Onion-skin renderer primitive, evaluated against a RoughAnimator prompt
+
+Owner shared a video of RoughAnimator plus a prompt written for **Trace**
+(a different repo, `tommyelgucci/Draw`, only read-access here) asking for
+lasso-transform, draggable hold frames, high-precision onion skinning, and
+audio-scrubbing layers. Flagged the mismatch first — wrong repo (no push
+access from this session), and some of it conflicts with decisions already
+on the books — then the owner chose to advance the design now, in
+Clumsyloop, adapted to its own engine rather than ported wholesale. Full
+per-feature reasoning is in `RUMBO.md`, "RoughAnimator-inspired UX ideas".
+
+Two features turned out to already be solved or already scoped-out, not
+new work: hold/exposure frames are already `document.ts`'s
+`celAt`/`celHoldLength` from task 2.1 (a UI affordance away, not a new
+engine concept), and audio-track import directly contradicts the explicit
+v1-scope exclusion already written into `document.ts`'s own header comment
+— left that alone rather than quietly reversing a decision that was made
+on purpose. Lasso-select + interactive transform is real scope (a
+selection type, a GL warp pass, pointer UI) — flagged as a future task,
+not attempted here. Per-layer independent frame duration is an
+architecture change, not an additive feature — flagged, not decided.
+
+What *was* buildable now, same reasoning as 2.1/2.2 (doesn't touch the
+camera): added `Renderer.renderOnionSkin(doc, frame, opts)` to
+`gl/renderer.ts` — composites tinted ghost frames from before/after the
+current one onto the current frame, fully colorized (tint strength 1, the
+standard flat red/cyan onion-skin look) at one shared opacity. Needed
+`CompositeOptions.tint` (rgb + strength, mixed into the source color
+before blending) added to `composite()` and `COMPOSITE_FS` — ported
+verbatim from Trace's own `tint` field, which exists there for the exact
+same onion-skin purpose. One correctness detail worth flagging for anyone
+touching `composite()` later: `uTint` is set unconditionally on every call
+now, defaulting to transparent when the caller doesn't pass one — the
+composite program is reused across calls, so a tint left over from an
+onion-skin pass would otherwise silently leak into the next plain
+composite that doesn't ask for one.
+
+Verification follows the same "real pixel readback, not eyeballing a
+screenshot" bar 2.2 set. Added a second manual harness in `App.tsx`
+(`OnionSkinHarness`, `window.__clumsyOnion`) — three frames on one
+mostly-transparent draw layer, each with a flat, non-overlapping,
+hard-edged square in a different corner, chosen specifically so the
+expected output color at each probe point is exact, not approximate:
+verified in `scripts/composite-check.mjs` that the before-ghost reads as
+pure red at ~40% opacity, the after-ghost as pure cyan at ~40%, the
+current frame's own square as fully opaque and untinted on top of both,
+and empty regions as fully transparent. All four passed on the first real
+run — the analytical prediction (worked out by hand from the premultiplied
+compositing formula before writing the check) matched exactly. Screenshot
+saved too: visually, the white "current" square is invisible against the
+white paper background in the screenshot specifically (present() draws
+paper under everything) — not a bug, just confirms the pixel probe (which
+reads the raw pre-present surface) is the check that actually matters
+here, not the screenshot.
+
+`npm run build`, `npm run lint`, and `npm test` (111/111, unaffected) all
+still pass. Not a `tasks.json` line item on its own — it's groundwork
+task 2.3 ("Capture UI: onion skin, shutter, filmstrip") will consume once
+that task's real blocker (camera device verification) clears; noted in
+2.3's `verify_note` so nobody rebuilds this from scratch later.
+
+---
+
 ### 2026-08-20 — Task 2.2: WebGL2 compositing renderer, verified with a real pixel-reading browser check
 
 Next unblocked task per `tasks.json`'s dependency graph now that 2.1 is

@@ -47,6 +47,86 @@ function makeSoftDot(size: number): HTMLCanvasElement {
 }
 
 /**
+ * Synthetic "drawn cel": a flat opaque square at `(x, y)`, rest fully
+ * transparent — hard edges on purpose (no antialiasing to account for), so
+ * a `readPixels` probe well inside or well outside the square gets an exact
+ * expected color, not an approximation.
+ */
+function makeSquare(size: number, color: string, x: number, y: number, side = 40): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, side, side);
+  return c;
+}
+
+/**
+ * Manual test harness for the onion-skin renderer primitive
+ * (`Renderer.renderOnionSkin`) — a RoughAnimator-style feature that's
+ * relevant to Clumsyloop's own drawing+camera differentiator, not just
+ * Trace (see RUMBO.md). Three frames on a single mostly-transparent draw
+ * layer, each with a square in a different corner, so the ghost tint math
+ * is checkable by exact pixel readback rather than eyeballing a screenshot
+ * — see `scripts/composite-check.mjs`'s onion-skin section for why the
+ * squares don't overlap the current frame's own square.
+ */
+function OnionSkinHarness() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const size = 256;
+    canvas.width = size;
+    canvas.height = size;
+
+    const renderer = new Renderer(canvas);
+    const doc = newDocument(size, size, 12, 3);
+
+    const drawLayer = newLayer('Drawing', true, 'draw');
+    const frames: [number, string, number, number][] = [
+      [0, '#16a34a', 20, 20], // frame 0: green, top-left
+      [1, '#ffffff', 196, 20], // frame 1 (current, under test): white, top-right
+      [2, '#2563eb', 20, 196], // frame 2: blue, bottom-left
+    ];
+    for (const [frame, color, x, y] of frames) {
+      const surface = renderer.createSurface(size, size);
+      renderer.uploadImage(surface, makeSquare(size, color, x, y));
+      drawLayer.cels.set(frame, { id: `cel-${frame}`, surface });
+    }
+    doc.layers = [drawLayer];
+
+    let lastSurface: Surface | null = null;
+    const render = () => {
+      lastSurface = renderer.renderOnionSkin(doc, 1, {
+        before: 1,
+        after: 1,
+        beforeTint: { r: 1, g: 0, b: 0 }, // red, standard "before" onion tint
+        afterTint: { r: 0, g: 1, b: 1 }, // cyan, standard "after" onion tint
+        opacity: 0.4,
+      });
+      renderer.present(lastSurface, doc.paper, doc.paperAlpha);
+    };
+    render();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).__clumsyOnion = {
+      renderer,
+      doc,
+      gl: renderer.gl,
+      render,
+      get lastSurface() {
+        return lastSurface;
+      },
+    };
+  }, []);
+
+  return <canvas ref={canvasRef} className="onion-canvas" style={{ width: 256, height: 256 }} />;
+}
+
+/**
  * Manual test harness for task 2.2 (WebGL2 compositing renderer) — builds a
  * document with one camera Cel and one drawn Cel on top, renders it, and
  * exposes `window.__clumsy` so `scripts/composite-check.mjs` can drive
@@ -156,6 +236,8 @@ export function App() {
       </div>
       <hr />
       <RendererHarness />
+      <hr />
+      <OnionSkinHarness />
     </div>
   );
 }

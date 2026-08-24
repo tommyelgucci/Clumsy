@@ -55,6 +55,7 @@ uniform sampler2D uBackdrop;  // premultiplied
 uniform float uOpacity;
 uniform int uBlend;
 uniform float uClip;          // 1.0 = clip to the backdrop's alpha
+uniform vec4 uTint;           // rgb + strength; used for onion skinning
 
 out vec4 fragColor;
 
@@ -91,6 +92,8 @@ void main() {
 
   vec3 cs = unpremul(src);
   vec3 cb = unpremul(bd);
+
+  cs = mix(cs, uTint.rgb, uTint.a);
 
   vec3 blended = vec3(
     blendChannel(uBlend, cb.r, cs.r),

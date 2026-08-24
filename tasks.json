@@ -71,7 +71,7 @@
           "description": "Main capture screen — shutter button that calls the native plugin, onion-skin overlay of the previous frame, filmstrip thumbnail strip.",
           "acceptance_criteria": "WHEN the user taps the shutter THE SYSTEM SHALL add a new frame to the filmstrip and update the onion skin to show that frame as a reference for the next one.",
           "verify_command": null,
-          "verify_note": "Manual verification on device.",
+          "verify_note": "Manual verification on device. The onion-skin rendering primitive this task needs is already built and pixel-verified ahead of time (RUMBO.md, \"RoughAnimator-inspired UX ideas\") — Renderer.renderOnionSkin in gl/renderer.ts. What's still missing is everything camera/UI-shaped: the shutter button wired to the native plugin, the filmstrip, and exposing onion-skin opacity/frame-count as real controls.",
           "status": "pending"
         },
         {

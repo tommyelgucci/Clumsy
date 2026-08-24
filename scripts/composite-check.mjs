@@ -185,6 +185,51 @@ try {
   });
   check('clipToBelow renders without throwing, center still has content', clipResult[3] > 0, `rgba=${clipResult}`);
 
+  console.log('\n— Onion skin (renderOnionSkin) —');
+  await page.waitForFunction(() => Boolean(window.__clumsyOnion), { timeout: 5000 });
+  const onionSamples = await page.evaluate(() => {
+    const { renderer, lastSurface } = window.__clumsyOnion;
+    const gl = renderer.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, lastSurface.fbo);
+    const read = (x, y) => {
+      const px = new Uint8Array(4);
+      gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      return [...px];
+    };
+    const out = {
+      // Frame 0's ghost square (top-left, [20,60)x[20,60)) doesn't overlap
+      // frame 1's own square (top-right) — should read pure red tint at
+      // opacity 0.4, nothing else contributing.
+      beforeGhost: read(40, 40),
+      // Frame 2's ghost square (bottom-left) — pure cyan tint at 0.4.
+      afterGhost: read(40, 216),
+      // Frame 1's own square (top-right, current frame) — full opacity,
+      // untinted white, on top of both ghosts.
+      current: read(216, 40),
+      // Nowhere any square exists — must stay fully transparent.
+      empty: read(128, 128),
+    };
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return out;
+  });
+  const near = (v, target, tol = 10) => Math.abs(v - target) <= tol;
+  check(
+    'before-ghost reads as red at ~40% opacity (tint fully replaces color, opacity controls visibility)',
+    near(onionSamples.beforeGhost[0], 102) && near(onionSamples.beforeGhost[1], 0) && near(onionSamples.beforeGhost[2], 0) && near(onionSamples.beforeGhost[3], 102),
+    `rgba=${onionSamples.beforeGhost}`,
+  );
+  check(
+    'after-ghost reads as cyan at ~40% opacity',
+    near(onionSamples.afterGhost[0], 0) && near(onionSamples.afterGhost[1], 102) && near(onionSamples.afterGhost[2], 102) && near(onionSamples.afterGhost[3], 102),
+    `rgba=${onionSamples.afterGhost}`,
+  );
+  check(
+    'the current frame renders fully opaque and untinted on top',
+    near(onionSamples.current[0], 255) && near(onionSamples.current[1], 255) && near(onionSamples.current[2], 255) && near(onionSamples.current[3], 255),
+    `rgba=${onionSamples.current}`,
+  );
+  check('empty regions stay fully transparent', onionSamples.empty.every((v) => v === 0), `rgba=${onionSamples.empty}`);
+
   console.log('\n— Console —');
   // "Failed to load resource: ... 404" is the browser's own message for the
   // favicon request — there's no `public/` folder or <link rel="icon"> in
@@ -197,6 +242,7 @@ try {
   const shotDir = process.env.SHOT_DIR;
   if (shotDir) {
     await page.locator('.composite-canvas').screenshot({ path: `${shotDir}/composite.png` });
+    await page.locator('.onion-canvas').screenshot({ path: `${shotDir}/onion.png` });
   }
 
   console.log(`\n${failures === 0 ? 'ALL GREEN' : `${failures} FAILURE(S)`}\n`);

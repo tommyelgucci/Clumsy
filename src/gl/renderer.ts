@@ -67,6 +67,8 @@ export interface CompositeOptions {
   blend: number;
   /** Clip to the backdrop's alpha — used for `Layer.clipToBelow`. */
   clip?: boolean;
+  /** rgb + strength (0..1); mixed into the source color before blending — used for onion skinning. */
+  tint?: [number, number, number, number];
 }
 
 export class Renderer {
@@ -91,7 +93,7 @@ export class Renderer {
     this.gl = gl;
 
     this.programs.set('composite', this.link('composite', QUAD_VS, COMPOSITE_FS, [
-      'uMatrix', 'uResolution', 'uFlipY', 'uSource', 'uBackdrop', 'uOpacity', 'uBlend', 'uClip',
+      'uMatrix', 'uResolution', 'uFlipY', 'uSource', 'uBackdrop', 'uOpacity', 'uBlend', 'uClip', 'uTint',
     ]));
     this.programs.set('present', this.link('present', QUAD_VS, PRESENT_FS, [
       'uMatrix', 'uResolution', 'uFlipY', 'uSource', 'uDocSize', 'uCheckerScale', 'uPaper', 'uPaperAlpha',
@@ -213,6 +215,11 @@ export class Renderer {
     gl.uniform1f(p.uniforms.uOpacity, opts.opacity);
     gl.uniform1i(p.uniforms.uBlend, opts.blend);
     gl.uniform1f(p.uniforms.uClip, opts.clip ? 1 : 0);
+    // Always set, even when unused: the composite program is reused across
+    // calls, so a tint left over from an onion-skin pass would otherwise
+    // leak into the next plain composite that doesn't pass one.
+    const t = opts.tint ?? [0, 0, 0, 0];
+    gl.uniform4f(p.uniforms.uTint, t[0], t[1], t[2], t[3]);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, src.texture);
@@ -308,5 +315,55 @@ export class Renderer {
     }
 
     return acc;
+  }
+
+  /**
+   * Composites `doc` at `frame` with ghost frames from before/after tinted
+   * underneath it — the RoughAnimator-style onion skin `RUMBO.md` calls out
+   * as relevant to Clumsyloop's own differentiator (drawing on the same
+   * timeline as the camera), not just a Trace feature. Deliberately simple
+   * for a first pass: every ghost frame gets the same `opacity`, no falloff
+   * by distance from the current frame — that's a natural follow-up once
+   * there's a real timeline UI to expose it from, not a WebGL constraint.
+   *
+   * Ghost frames are full re-renders of `doc` at neighboring frame numbers,
+   * fully colorized to `beforeTint`/`afterTint` (tint strength 1, not just
+   * mixed in) — the standard "flat red/blue silhouette" onion-skin look,
+   * distinct from a normal composite's partial `CompositeOptions.tint`.
+   * Frames outside `[0, doc.frameCount)` are skipped, not clamped — a
+   * clamped ghost would duplicate the boundary frame's silhouette on top of
+   * itself, which reads as a rendering bug, not "no more frames here".
+   */
+  renderOnionSkin(
+    doc: ClumsyloopDocument,
+    frame: number,
+    opts: { before: number; after: number; beforeTint: RGB; afterTint: RGB; opacity: number },
+  ): Surface {
+    const { width, height } = doc;
+    let out = this.scratch('onion-acc-a', width, height);
+    this.clear(out);
+    let outAlt = this.scratch('onion-acc-b', width, height);
+    const ghost = this.scratch('onion-ghost', width, height);
+
+    const paintGhost = (f: number, tint: RGB) => {
+      if (f < 0 || f >= doc.frameCount || f === frame) return;
+      this.copy(ghost, this.renderDocument(doc, f));
+      this.composite(outAlt, out, ghost, {
+        opacity: opts.opacity,
+        blend: BLEND_INDEX.normal,
+        clip: false,
+        tint: [tint.r, tint.g, tint.b, 1],
+      });
+      [out, outAlt] = [outAlt, out];
+    };
+
+    for (let f = frame - opts.before; f < frame; f++) paintGhost(f, opts.beforeTint);
+    for (let f = frame + opts.after; f > frame; f--) paintGhost(f, opts.afterTint);
+
+    this.copy(ghost, this.renderDocument(doc, frame));
+    this.composite(outAlt, out, ghost, { opacity: 1, blend: BLEND_INDEX.normal, clip: false });
+    [out, outAlt] = [outAlt, out];
+
+    return out;
   }
 }

@@ -128,6 +128,53 @@ exactly the charm of handmade animation — nothing stays perfect, and
 that's what makes it shareable instead of studio animation — and "loop"
 is literally what the app produces.
 
+## RoughAnimator-inspired UX ideas (evaluated 2026-08-20)
+
+The owner shared a video of RoughAnimator (a well-regarded traditional
+frame-by-frame iPad app) plus a prompt written for **Trace**, not this
+project — asking for a lasso-select transform tool, a draggable
+hold-frame timeline, high-precision onion skinning, and unlimited layers
+with independent per-layer duration and audio scrubbing. Worth writing
+down here since RoughAnimator is a real competitor in the "pure drawing,
+no camera" corner of this market (the same corner Procreate Dreams sits
+in — see "The differentiator" above), so its UX choices are legitimate
+reference material for Clumsyloop specifically, not just Trace.
+
+Evaluated against what's already built or scoped:
+
+- **Hold/exposure frames**: already the data model, no new work needed.
+  `core/document.ts`'s `celAt`/`celStartFrame`/`celHoldLength` (task 2.1)
+  already implement "a cel holds until the next one starts" — RoughAnimator's
+  draggable timeline block is a UI affordance over data that already
+  exists, not a new engine concept.
+- **Onion skinning**: built ahead of task 2.3 (the same "advance what
+  doesn't depend on the camera" reasoning already used for 2.1/2.2) —
+  `Renderer.renderOnionSkin` in `gl/renderer.ts` composites tinted ghost
+  frames from before/after the current one, with adjustable opacity.
+  First pass only, on purpose: every ghost gets the same opacity, no
+  falloff by distance — a real timeline UI (task 2.3, still blocked on
+  camera verification) is what would expose per-frame-distance control,
+  not a WebGL constraint.
+- **Lasso selection + interactive transform** (scale/rotate/translate/
+  squash-stretch on a selection, applied live with the pencil): genuinely
+  useful, but a bigger scope than a single follow-up — needs a selection
+  mask/region type in `core/`, a GL warp pass, and pointer-driven UI, none
+  of which exist yet. Not attempted here; worth its own task(s) once
+  someone wants to scope it deliberately, not folded into an unrelated
+  session.
+- **Audio track import + scrubbing**: **conflicts with an explicit,
+  already-documented v1 scope decision**, not just an open feature.
+  `core/document.ts`'s header comment lists `AudioTrack` among what Trace
+  has that Clumsyloop's `ClumsyloopDocument` deliberately dropped for v1.
+  Reversing that needs the owner to say so explicitly — implementing it
+  quietly here would contradict a decision that's already written down
+  and was made on purpose.
+- **Independent per-layer frame duration** (vs. this project's single
+  `ClumsyloopDocument.frameCount` shared by every layer): a real
+  architecture change, not an additive feature — every place that reads
+  `doc.frameCount` today would need to decide what "per-layer" means for
+  it. Flagged, not decided; needs its own conversation before code.
+
 ## Known debts / risks left open
 
 - **Manual moderation doesn't scale.** The day there's real traffic, a
