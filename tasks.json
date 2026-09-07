@@ -60,9 +60,9 @@
           "depends_on": ["2.1"],
           "description": "gl/renderer.ts — upload the captured photo as a texture, composite it with the drawing layers on top, all alpha-premultiplied. A single Y-flip pass, same as Trace.",
           "acceptance_criteria": "WHEN a document with a camera Cel and a drawn Cel on top is rendered THE SYSTEM SHALL show both composited correctly, with no color halos or orientation mismatch.",
-          "verify_command": null,
-          "verify_note": "Visual verification in browser/device — same criterion as Trace and Beautyapp, tsc can't see a broken WebGL pipeline.",
-          "status": "pending"
+          "verify_command": "npm run test:renderer-smoke",
+          "verify_note": "Passes as of 2026-09-07. Visual verification done headlessly (Playwright + SwiftShader, this environment has no physical device either) via a new RendererHarness component (window.__clumsyloop) and scripts/renderer-smoke.mjs, reading back with renderer.toImageData() rather than a canvas screenshot — same preserveDrawingBuffer:false trap Trace's CLAUDE.md documents. Checks a four-quadrant synthetic photo (catches an orientation flip a solid color couldn't) with a real StrokeBuilder-generated pencil stroke composited on top: all four quadrants keep their own color, the stroke reads clearly darker than the photo under it, and the area just beside the stroke matches the plain photo color with no dark fringe. A screenshot for human eyeballing confirms the same by eye. Trimmed hard from Trace's renderer.ts, all flagged in gl/renderer.ts's own header comment: no GPU texture residency budget/eviction (a real concern for 'hundreds of photos' per RUMBO.md, deliberately deferred until the capture UI, task 2.3, produces real frame counts to profile against instead of guessing), no mesh skinning/rig, no adjustment layers, no selection, no pigment-mix wet blending (one ported brush.ts preset sets pigmentMix, but live stroke merging is the future drawing UI's job), no thumbnail downscaling (task 2.3 is the first actual caller). Kept in full: all 13 BlendModes and brush stamping (drawStamps), since types.ts/brush.ts already commit to them.",
+          "status": "done"
         },
         {
           "id": "2.3",

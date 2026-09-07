@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CameraCapture } from '../native/cameraCapture';
+import { RendererHarness } from './RendererHarness';
 
 // Manual test harness for tasks 1.2/1.3 (the camera plugin skeleton and
 // its exposure/focus lock) — not the real capture UI, which lands in
@@ -55,6 +56,8 @@ export function App() {
           <img key={i} src={`data:image/jpeg;base64,${base64}`} alt={`Frame ${i + 1}`} />
         ))}
       </div>
+      <hr />
+      <RendererHarness />
     </div>
   );
 }

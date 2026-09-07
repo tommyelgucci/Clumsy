@@ -1,5 +1,90 @@
 # Checkpoint — Progress log
 
+### 2026-09-07 — Task 2.2: WebGL2 renderer, compositing camera frame + drawn layers
+
+Built `gl/shaders.ts` and replaced the `gl/renderer.ts` stub (which so far
+only had the `Surface` type, for `document.ts`'s type-only dependency)
+with a real `Renderer`. Ported from Trace's `gl/renderer.ts`/`shaders.ts`
+(same owner, in this session's repo scope), trimmed hard — all cuts
+listed and reasoned about in `renderer.ts`'s own header comment, not just
+here: no GPU texture residency budget/eviction/CPU backing (Trace counts
+texture bytes because a rig-heavy project keeps dozens of surfaces alive;
+Clumsyloop's real memory question is different — a stop-motion project is
+"hundreds of photos" per RUMBO.md, each a full-document camera Cel — but
+building an eviction pool now, before task 2.3's capture UI exists to
+generate real frame counts to profile against, would be guessing at a
+solution before the problem's actual shape is known; flagged as a debt,
+likely lands in 2.3 or 2.4), no mesh skinning/rig, no adjustment layers,
+no selection outline, no pigment-mix wet blending (one ported `brush.ts`
+preset, "Watercolor", sets `pigmentMix: 0.15` — `drawStamps` still paints
+its stamps correctly, just without the subtractive-mix merge pass, which
+is the future drawing UI's job, not this renderer's), no thumbnail
+downscaling (task 2.3, "filmstrip thumbnail strip", is the first actual
+caller — building it now with nothing to verify against risks getting the
+ink-bounds cropping subtly wrong unnoticed). Kept in full, not trimmed:
+all 13 `BlendMode`s and brush stamping (`drawStamps` + `getBrushTexture`),
+since `types.ts` and the already-ported `brush.ts` commit to both.
+
+Redesigned the `Surface` stub along the way — it was only a placeholder
+interface (`{width, height, texture, version}`), never used by any real
+code, so nothing outside `renderer.ts` depended on its shape (confirmed:
+`document.ts` only imports it as a type, and `document.test.ts` already
+avoids touching `.surface` by design). The new `Surface` is a class
+holding a texture + FBO, matching Trace's invariant that every surface is
+exactly document-sized — no per-surface width/height. That means a
+captured photo has to already be sized to the document before it becomes
+a camera Cel; the resize step itself is capture-UI glue, task 2.3's job.
+
+Added a document-level composition entry point, `Renderer.renderDocumentFrame(doc, frame)`,
+that Trace itself keeps in a separate `engine.ts` rather than
+`renderer.ts` — folded into this file instead since Clumsyloop doesn't
+have an `engine.ts` yet and task 2.2 in `tasks.json` only names
+`renderer.ts`; splitting one out now, with no second caller yet to
+justify the boundary, would be the premature-abstraction mistake the
+project is trying to avoid elsewhere. Ported and trimmed from Trace's
+`engine.ts` `compositeGroups`/`rasterizeLayer` (clip groups resolved
+against their base layer, then composited onto the accumulator bottom to
+top) — with no wet-stroke live-compositing, no onion-skin ping-pong, no
+active-layer cache-boundary optimization, since none of those exist here
+yet. Layer transforms (`TransformTrack`, kept in `document.ts` for future
+effects/dialogue-bubble animation) are honored via the same
+rotate/scale-about-center matrix Trace hand-rolls, reproduced here instead
+by composing two existing `math.ts` helpers (`mat3FromTRS` + `mat3Multiply`)
+— confirmed algebraically equivalent before using it, rather than hand-rolling
+a third copy of the same arithmetic.
+
+Visual verification (this environment has no physical device, same as
+phase 1 — see `CLAUDE.md`) done headlessly: a new `ui/RendererHarness.tsx`
+component builds a tiny synthetic document (one camera Cel — a
+four-quadrant synthetic "photo", standing in for
+`CameraCapture.capturePhoto()`, chosen specifically because a solid-color
+photo can't catch an orientation flip — plus one draw Cel, a real
+`StrokeBuilder`-generated pencil stroke) and composites it, exposing
+`window.__clumsyloop` for scripting. `scripts/renderer-smoke.mjs`
+(Playwright + SwiftShader, `npm run test:renderer-smoke`, new devDependency
+`playwright` at Trace's same pinned version) drives it and reads back with
+`renderer.toImageData()` rather than screenshotting the live canvas — the
+same `preserveDrawingBuffer: false` trap Trace's `CLAUDE.md` documents
+(a canvas screenshot can lag a frame behind; `readPixels` doesn't). All
+checks pass: every quadrant keeps its own color (no orientation flip),
+the stroke reads clearly darker than the photo underneath it (compositing
+works), and the area just beside the stroke matches the plain photo color
+with no dark fringe (no color-halo bug from a premultiplication mistake).
+A screenshot taken the same way, for human eyeballing, confirms the same.
+
+Mounted `RendererHarness` into `App.tsx` below the existing phase-1
+camera-plugin buttons, matching that file's own framing
+("manual test harness ... not the real capture UI") rather than starting
+a second entry point for one more manual test.
+
+`npm run build`, `npm run lint`, and `npm test` (111/111, unchanged) all
+pass clean; `npm run test:renderer-smoke` needs `npm run dev` running
+separately, same convention as Trace's own Playwright scripts.
+
+**Marked 2.2 `done`** in `tasks.json`.
+
+---
+
 ### 2026-08-16 (later once more) — Ported brush.ts, brushTexture.ts, and the palette system directly
 
 The one explicit exception in `CLAUDE.md`: unlike `document.ts`, these
