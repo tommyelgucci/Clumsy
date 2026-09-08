@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CameraCapture } from '../native/cameraCapture';
+import { PersistenceHarness } from './PersistenceHarness';
 import { RendererHarness } from './RendererHarness';
 
 // Manual test harness for tasks 1.2/1.3 (the camera plugin skeleton and
@@ -58,6 +59,8 @@ export function App() {
       </div>
       <hr />
       <RendererHarness />
+      <hr />
+      <PersistenceHarness />
     </div>
   );
 }

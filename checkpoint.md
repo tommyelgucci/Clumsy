@@ -1,5 +1,117 @@
 # Checkpoint — Progress log
 
+### 2026-09-08 — Task 2.5: local project persistence (save/resume, IndexedDB)
+
+Owner asked to keep pushing the engine forward while phase 1's device
+verification stays blocked, same reasoning as 2.1/2.2 — this time
+targeting 2.4/2.5 specifically to steer clear of anything camera-coupled.
+2.4 (native `.mp4` export via AVFoundation/Swift) shares phase 1's actual
+limitation — this environment can write Swift but can't build or run it —
+so only 2.5 got built. Before touching code, asked the owner one real
+architecture question `RUMBO.md`/`CLAUDE.md` didn't settle: IndexedDB
+(Trace's own approach, no new dependency) vs. Capacitor's Filesystem
+plugin (more reliable for "hundreds of photos" surviving force-quit on a
+device with little space, per RUMBO.md's own stated business risk, but a
+new native dependency this session can't verify on hardware). Owner chose
+IndexedDB to start.
+
+Split three ways, matching CLAUDE.md's "`gl/` is the sole point of
+contact with WebGL" literally rather than the way Trace's own `io.ts`
+does (Trace's `io.ts` calls `engine.renderer.toImageData()` directly):
+
+- `core/io.ts` — pure: JSON-safe document/layer/transform metadata
+  (de)serialization, and PNG encode/decode via `upng-js` (new
+  dependency). Chose `upng-js` over Trace's `canvas.toBlob()` specifically
+  so this file gets real `npm test` coverage (no DOM canvas under Node) —
+  already the library RUMBO.md's known-debts note pointed at for exactly
+  this task, not a fresh choice made now. Found a real bug in
+  `upng-js@2.1.0` along the way: with `cnum=0`, `encode()` still
+  auto-selects palette mode (ctype 3) whenever a frame has ≤256 unique
+  colors, and this version's `decode()`/`toRGBA8()` crashes on its own
+  palette output (`out.data` comes back `undefined` — confirmed against a
+  bare encode/decode round trip with nothing else involved). Worked around
+  by passing `forbidPlte: true` — encode's 6th argument, present in the
+  actual library but missing from `@types/upng-js`'s declarations, so
+  `core/io.ts` casts a narrow local type for just that call rather than
+  reaching for `any`. Forcing truecolor+alpha this way is also just
+  correct for this project regardless of the bug: a flat-colored drawn
+  cel is exactly the kind of content that would trip ≤256-color palette
+  selection, and lossless round-tripping matters more here than the
+  handful of bytes palette mode would have saved.
+- `gl/projectIO.ts` — the GPU-facing glue `core/io.ts` can't own:
+  `captureProject` reads every non-empty cel's pixels off the GPU
+  (`renderer.toImageData`) and hands them to `core/io.ts` to encode;
+  `restoreProject` decodes each saved PNG and uploads it into a freshly
+  created `Surface` via a new `Renderer.uploadPixels` method (raw-pixel
+  sibling to task 2.2's `uploadImage`, added here since decoded PNG bytes
+  aren't an `ImageBitmap`/canvas — premultiplies in JS rather than
+  trusting `UNPACK_PREMULTIPLY_ALPHA_WEBGL` for a raw `ArrayBufferView`
+  source, which isn't as clearly specified as it is for an image source).
+- `state/projectStore.ts` — IndexedDB, a single key-value object store
+  keyed by project id, same shape as Trace's autosave. Degrades to a
+  no-op when `indexedDB` isn't available, same guard `palettes.ts`
+  already established for `localStorage` under Node. Cels stored as
+  `[celId, bytes][]` pairs rather than a `Map` directly — `Map` is
+  structured-cloneable in IndexedDB on modern engines, but that can't be
+  confirmed on an actual WKWebView from this environment, so this sticks
+  to a shape IndexedDB has always supported instead of assuming.
+
+No history persistence, no zip container, no bone rigs/masks/text/
+adjustment/audio/custom-texture export — none of that exists in
+Clumsyloop yet or is in v1 scope; the acceptance criteria is "frame by
+frame, exactly as it was" for frames + layers + metadata, not the undo
+stack.
+
+Verification: `core/io.test.ts` (9 new tests — metadata round-trip
+including transform keyframes, cel placements flattened with no
+`Surface` attached, PNG round-trip including the palette-bug regression
+case) runs under plain `npm test`, no browser needed — `npm test` is
+120/120 now. The GPU + IndexedDB path needs a real browser (this
+environment has no physical device either — see `CLAUDE.md`), so it's
+verified the same way task 2.2 was: a `PersistenceHarness` component
+(`window.__clumsyloopPersistence`) builds a two-frame camera layer + one
+draw layer, saves it, and a new `scripts/persistence-smoke.mjs`
+(Playwright + SwiftShader, `npm run test:persistence-smoke`) drives a
+full page reload — the closest proxy this environment has for "force-quit
+and relaunch" (IndexedDB and `localStorage` both survive it the same way
+they survive a real force-quit, unlike JS/WebGL state) — and confirms
+every field and every composited pixel survives.
+
+Getting that smoke test green surfaced two real bugs worth calling out,
+not just the upng-js one above:
+
+1. **A race in the test setup, not the app**: clearing IndexedDB/localStorage
+   right after `page.goto`'s `networkidle` fires still raced against the
+   *first* page load's own in-flight async save — its tail end would
+   overwrite the just-cleared `localStorage` flag a moment later.
+   `networkidle` resolves long before IndexedDB writes finish; fixed by
+   waiting for the harness's own "I'm done" signal before clearing
+   anything, not a fixed delay.
+2. **A real aliasing bug in `Renderer.renderDocumentFrame` (task 2.2)**:
+   its returned surface is one of the renderer's own reused scratch
+   buffers. Rendering frame 0 then frame 6 back to back and holding both
+   return values looked fine until frame 6's render silently overwrote
+   frame 0's — both calls' clip-group count gives the ping-pong pool the
+   same parity, so they alias the same physical surface. Not a 2.5 bug,
+   but 2.5 is the first caller that ever needed two rendered frames alive
+   at once, which is exactly why 2.2's own smoke test never caught it.
+   Fixed by copying each frame's result into its own dedicated surface
+   immediately (`PersistenceHarness`'s `renderBothFrames` helper) and
+   documented the aliasing contract directly on `renderDocumentFrame`
+   itself so the next caller doesn't rediscover it the same way.
+   `test:renderer-smoke` still passes unchanged — that harness only ever
+   rendered one frame, so it was never exposed to this.
+
+`npm run build`/`lint`/`test` all clean; `test:renderer-smoke` and the
+new `test:persistence-smoke` both green, re-run twice to rule out
+flakiness in the reload-based verification.
+
+**Marked 2.5 `done`** in `tasks.json`, ahead of 2.3 per the same explicit
+early-start exception 2.1/2.2 used. 2.4 (export) is still `pending` —
+that one's blocked on the same device access phase 1 is.
+
+---
+
 ### 2026-09-07 — Task 2.2: WebGL2 renderer, compositing camera frame + drawn layers
 
 Built `gl/shaders.ts` and replaced the `gl/renderer.ts` stub (which so far

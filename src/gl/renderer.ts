@@ -548,6 +548,31 @@ export class Renderer {
     s.version++;
   }
 
+  /** Uploads raw straight-alpha RGBA8 pixels into a surface — how a
+   *  decoded PNG (`core/io.ts`'s `decodeCelPixels`, task 2.5) becomes a
+   *  cel's content again on load. Premultiplies in JS rather than
+   *  relying on `UNPACK_PREMULTIPLY_ALPHA_WEBGL` the way `uploadImage`
+   *  does: that flag is well-specified for an image/canvas source, not
+   *  for a raw `ArrayBufferView`, so this doesn't take the risk. Pixels
+   *  must already be sized to the document, same caveat as `uploadImage`. */
+  uploadPixels(s: Surface, width: number, height: number, straightRGBA: Uint8Array) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, s.tex);
+    gl.texSubImage2D(
+      gl.TEXTURE_2D,
+      0,
+      0,
+      0,
+      Math.min(width, this.docWidth),
+      Math.min(height, this.docHeight),
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      premultiply(straightRGBA),
+    );
+    s.empty = false;
+    s.version++;
+  }
+
   readRect(s: Surface, x: number, y: number, w: number, h: number): Uint8Array {
     const gl = this.gl;
     const out = new Uint8Array(w * h * 4);
@@ -582,6 +607,17 @@ export class Renderer {
    * base layer before the group as a whole reaches the accumulator, same
    * order Trace's `engine.ts` uses, trimmed of the wet-stroke/onion-skin/
    * active-layer caching this renderer doesn't have yet.
+   *
+   * The returned `Surface` is one of this renderer's own scratch buffers
+   * (same convention as Trace's `compositeGroups`) — it's only valid
+   * until the next call that touches the accumulator pool, including the
+   * next `renderDocumentFrame` call for a different frame. A caller that
+   * needs to keep more than one rendered frame around at once (rendering
+   * two frames back to back to compare them, encoding a whole clip to
+   * export) must `copy()` each result into its own surface right away;
+   * holding onto two calls' return values directly aliases the same
+   * buffer once their clip-group counts give the ping-pong the same
+   * parity — confirmed the hard way once, not a hypothetical caveat.
    */
   renderDocumentFrame(doc: ClumsyloopDocument, frame: number): Surface {
     this.setDocumentSize(doc.width, doc.height);
@@ -671,4 +707,19 @@ function unpremultiply(px: Uint8Array) {
       px[i + 2] = Math.min(255, px[i + 2] * inv);
     }
   }
+}
+
+/** Converts straight-alpha RGBA to premultiplied, into a new buffer
+ *  (`uploadPixels` needs the input untouched — it may be a caller-owned
+ *  `DecodedCel.pixels`). */
+function premultiply(px: Uint8Array): Uint8Array {
+  const out = new Uint8Array(px.length);
+  for (let i = 0; i < px.length; i += 4) {
+    const a = px[i + 3];
+    out[i] = (px[i] * a) / 255;
+    out[i + 1] = (px[i + 1] * a) / 255;
+    out[i + 2] = (px[i + 2] * a) / 255;
+    out[i + 3] = a;
+  }
+  return out;
 }

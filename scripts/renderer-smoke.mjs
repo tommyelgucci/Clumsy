@@ -33,7 +33,7 @@ const check = (name, ok, extra = '') => {
 };
 
 await page.goto('http://127.0.0.1:5173/', { waitUntil: 'networkidle' });
-await page.waitForFunction(() => Boolean(window.__clumsyloop), { timeout: 10000 });
+await page.waitForFunction(() => Boolean(window.__clumsyloop), undefined, { timeout: 10000 });
 
 if (errors.length > 0) {
   check('no console/page errors while rendering', false, errors.join(' | '));
