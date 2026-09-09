@@ -1,5 +1,87 @@
 # Checkpoint — Progress log
 
+### 2026-09-09 — Task 2.6 (new): the drawing UI — brush.ts and palettes.ts finally have a consumer
+
+Asked what else to build while phase 1 stays blocked on device access.
+Offered three camera-independent options (Firestore rules, the web half
+of export, the drawing UI); owner picked the drawing UI — the actual
+product differentiator, not backend or export plumbing, and the one that
+turns two already-ported-but-unused pieces (`core/brush.ts`,
+`state/palettes.ts`) into something a person can actually use. Added as
+task 2.6 in `tasks.json` since it wasn't itemized there originally — the
+2.1 checkpoint entry from 2026-08-16 already flagged `brush.ts` as
+"groundwork for whichever future task actually builds the drawing UI,"
+so this fills that named gap rather than inventing new scope unprompted.
+
+New `gl/engine.ts` — deliberately NOT a port of Trace's `core/engine.ts`.
+Trace's engine carries revision/`touch()`/subscribe pub-sub (the pattern
+`CLAUDE.md`'s architecture section already documents) because many
+independent UI pieces there — layers panel, undo button, timeline — all
+react to document mutations outside React's own state flow. Clumsyloop's
+engine has exactly one consumer so far, the canvas itself, and it updates
+imperatively (`renderAndPresent()`, called directly after every stroke
+mutation) — no second listener exists yet to justify the pub-sub
+machinery. Documented as the reason to add it on `Engine` itself, for
+whoever builds the first thing (a layers panel, a frame counter) that
+actually needs it. Also NOT ported: Trace's wet-stroke staging surface
+(a stroke there lives on a scratch surface until pointer-up, needed for
+pigment-mix blending and a "cancel this stroke" gesture) — here, stamps
+go straight onto the permanent cel as they arrive. Real, named
+consequence: the one `brush.ts` preset that wants pigment-mix blending
+("Watercolor", `pigmentMix: 0.15`) paints correctly shaped/colored
+stamps but without the subtractive-mix merge Trace's `mixOver` gives it.
+No undo yet either — `history.ts` exists but isn't wired to the engine.
+Single fixed "Ink" draw layer, single frame (frame 0) — no timeline, no
+camera layer; those need the capture UI (task 2.3), still blocked.
+
+`Renderer.drawStamps` (task 2.2) gained an `erase` parameter — `brush.ts`
+ported two eraser-category presets back in the 2.1 pass, but nothing had
+ever exercised that code path since drawStamps only ever did plain
+src-over accumulation. Erase mode switches to
+`blendFunc(ZERO, ONE_MINUS_SRC_ALPHA)`, same trick `drawOver`'s existing
+`erase` parameter already uses — the stamp's alpha coverage still comes
+from the same shader, only the destination blend changes.
+
+New `state/tool.ts` (active brush id + color, Zustand) — same "split out
+because Trace's `store.ts` mixes this with panel/quick-shape/rig state
+Clumsyloop doesn't have" reasoning `palettes.ts`'s own header comment
+already gives. New `ui/DrawingCanvas.tsx` wires pointer events to the
+engine: tilt→altitude/azimuth conversion and the mouse/pen pressure
+default are ported directly from Trace's `ui/CanvasView.tsx`
+(`tiltToSpherical`) rather than re-derived, since `brush.ts`'s tilt-aspect
+math expects that exact convention. Brush picker groups `DEFAULT_BRUSHES`
+by `BRUSH_CATEGORIES`; color picker reads `usePalettes`'s curated
+`paletteGroups` plus a native `<input type="color">` for anything outside
+the curated set. Mounted above the existing camera/renderer/persistence
+harnesses in `App.tsx` — it's real product UI now, not one more manual
+test harness, so it leads the page instead of stacking at the bottom.
+
+Verified with real pointer events, not synthetic `Stamp[]` arrays (unlike
+`renderer-smoke.mjs`): a new `scripts/drawing-smoke.mjs` drags the mouse
+across the actual on-screen canvas and reads back the result via
+`renderer.toImageData()`. First pass measured a plain average over a
+40×40 box around the stroke and got a false failure — a 6px-diameter
+pencil line only covers a sliver of a box that size, so the average
+washes out close to white even though the stroke drew correctly (checked
+directly: dark ink was there, at R=41). Fixed by scanning for the
+darkest pixel in a band around the expected line instead of averaging —
+answers "is there ink here" without needing to know the exact line
+width or pixel-perfect position. Confirms: a stroke draws visible dark
+ink; switching color mid-session changes the next stroke's color while
+leaving the earlier stroke byte-for-byte unchanged; the eraser brush
+removes ink instead of adding color; Clear resets the layer. All three
+Playwright smoke tests (`test:renderer-smoke`, `test:persistence-smoke`,
+`test:drawing-smoke`) pass together, confirming no regressions.
+
+`npm run build`/`lint`/`test` all clean (120/120 unit tests, unchanged —
+this task's logic is pointer-driven, not unit-testable the way pure
+`core/` modules are, same reasoning `document.test.ts` already gives for
+deferring `Surface`-touching behavior to browser verification).
+
+**Marked 2.6 `done`** in `tasks.json`.
+
+---
+
 ### 2026-09-08 — Task 2.5: local project persistence (save/resume, IndexedDB)
 
 Owner asked to keep pushing the engine forward while phase 1's device

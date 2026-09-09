@@ -11,6 +11,7 @@
     "test": "node --import ./scripts/register-ts-loader.mjs --test src/core/*.test.ts src/state/*.test.ts",
     "test:renderer-smoke": "node scripts/renderer-smoke.mjs",
     "test:persistence-smoke": "node scripts/persistence-smoke.mjs",
+    "test:drawing-smoke": "node scripts/drawing-smoke.mjs",
     "cap:sync": "cap sync ios",
     "cap:open": "cap open ios"
   },

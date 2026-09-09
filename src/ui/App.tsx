@@ -1,11 +1,9 @@
 import { useState } from 'react';
 import { CameraCapture } from '../native/cameraCapture';
+import { DrawingCanvas } from './DrawingCanvas';
 import { PersistenceHarness } from './PersistenceHarness';
 import { RendererHarness } from './RendererHarness';
 
-// Manual test harness for tasks 1.2/1.3 (the camera plugin skeleton and
-// its exposure/focus lock) — not the real capture UI, which lands in
-// phase 2 once 1.3's flicker check passes on a device.
 export function App() {
   const [frames, setFrames] = useState<string[]>([]);
   const [locked, setLocked] = useState(false);
@@ -44,6 +42,12 @@ export function App() {
 
   return (
     <div>
+      <DrawingCanvas />
+      <hr />
+
+      {/* Manual test harness for tasks 1.2/1.3 (the camera plugin skeleton
+          and its exposure/focus lock) — not the real capture UI, which
+          lands in phase 2 once 1.3's flicker check passes on a device. */}
       <button onClick={handleLock} disabled={locked}>
         Lock exposure/focus
       </button>

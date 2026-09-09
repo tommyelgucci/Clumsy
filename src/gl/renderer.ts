@@ -347,7 +347,7 @@ export class Renderer {
    * Stamps a batch of brush points onto `target`. Every stamp in a
    * segment goes in one instanced draw call.
    */
-  drawStamps(target: Surface, stamps: Stamp[], color: RGB, brushTexture?: WebGLTexture) {
+  drawStamps(target: Surface, stamps: Stamp[], color: RGB, brushTexture?: WebGLTexture, erase = false) {
     if (stamps.length === 0) return;
     const gl = this.gl;
 
@@ -377,7 +377,12 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
     gl.viewport(0, 0, this.docWidth, this.docHeight);
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    // Erase brushes (brush.ts's 'eraser' category) subtract coverage from
+    // the destination instead of laying down ink — same trick as Trace's
+    // drawOver: the shader's RGB output is irrelevant here since ZERO
+    // drops it, only the stamp's alpha shapes how much gets erased.
+    if (erase) gl.blendFunc(gl.ZERO, gl.ONE_MINUS_SRC_ALPHA);
+    else gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
     gl.uniform2f(p.uniforms.uResolution, this.docWidth, this.docHeight);
     gl.uniform3f(p.uniforms.uColor, color.r, color.g, color.b);
