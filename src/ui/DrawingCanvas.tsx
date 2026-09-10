@@ -36,6 +36,8 @@ export function DrawingCanvas() {
   const engineRef = useRef<Engine | null>(null);
   const [ready, setReady] = useState(false);
 
+  const mode = useTool((s) => s.mode);
+  const setMode = useTool((s) => s.setMode);
   const activeBrushId = useTool((s) => s.activeBrushId);
   const activeColor = useTool((s) => s.activeColor);
   const setActiveBrush = useTool((s) => s.setActiveBrush);
@@ -46,12 +48,30 @@ export function DrawingCanvas() {
   const strokeBrushRef = useRef<BrushPreset>(DEFAULT_BRUSHES[0]);
   const strokeColorRef = useRef<RGB>(activeColor);
   strokeColorRef.current = activeColor;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   useEffect(() => {
     strokeBrushRef.current = DEFAULT_BRUSHES.find((b) => b.id === activeBrushId) ?? DEFAULT_BRUSHES[0];
   }, [activeBrushId]);
 
   const paletteGroups = usePalettes((s) => s.paletteGroups);
   const [paletteIndex, setPaletteIndex] = useState(0);
+
+  // Bucket fill's three knobs (see core/flood.ts): tolerance decides how
+  // different a color can be and still count as "inside"; expand bleeds
+  // the fill a few pixels past the line, to cover its antialiasing
+  // sliver; gapClose is different from both — it lets the fill treat a
+  // small real break in the line as still closed, instead of leaking
+  // through it.
+  const [tolerance, setTolerance] = useState(0.15);
+  const [expand, setExpand] = useState(2);
+  const [gapClose, setGapClose] = useState(2);
+  const toleranceRef = useRef(tolerance);
+  toleranceRef.current = tolerance;
+  const expandRef = useRef(expand);
+  expandRef.current = expand;
+  const gapCloseRef = useRef(gapClose);
+  gapCloseRef.current = gapClose;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -107,9 +127,16 @@ export function DrawingCanvas() {
   const handlePointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const engine = engineRef.current;
     if (!engine) return;
+    const sample = toSample(e);
+    if (modeRef.current === 'bucket') {
+      // A fill is a single tap, not a drag — no pointer capture, no
+      // stroke tracking, `pointermove`/`pointerup` stay no-ops for it.
+      void engine.floodFill(sample.x, sample.y, strokeColorRef.current, toleranceRef.current, expandRef.current, gapCloseRef.current);
+      return;
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     drawingId.current = e.pointerId;
-    engine.beginStroke(strokeBrushRef.current, strokeColorRef.current, toSample(e));
+    engine.beginStroke(strokeBrushRef.current, strokeColorRef.current, sample);
   };
 
   const handlePointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -145,6 +172,32 @@ export function DrawingCanvas() {
 
       <div>
         <button onClick={handleClear}>Clear</button>
+      </div>
+
+      <div>
+        <h3>Tool</h3>
+        <button onClick={() => setMode('draw')} aria-pressed={mode === 'draw'} style={{ fontWeight: mode === 'draw' ? 'bold' : 'normal' }}>
+          Draw
+        </button>
+        <button onClick={() => setMode('bucket')} aria-pressed={mode === 'bucket'} style={{ fontWeight: mode === 'bucket' ? 'bold' : 'normal' }}>
+          Bucket
+        </button>
+        {mode === 'bucket' && (
+          <div>
+            <label>
+              Tolerance {tolerance.toFixed(2)}
+              <input type="range" min={0} max={1} step={0.01} value={tolerance} onChange={(e) => setTolerance(Number(e.target.value))} />
+            </label>
+            <label>
+              Expand {expand}px
+              <input type="range" min={0} max={8} step={1} value={expand} onChange={(e) => setExpand(Number(e.target.value))} />
+            </label>
+            <label>
+              Gap closure {gapClose}px
+              <input type="range" min={0} max={8} step={1} value={gapClose} onChange={(e) => setGapClose(Number(e.target.value))} />
+            </label>
+          </div>
+        )}
       </div>
 
       <div>

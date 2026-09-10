@@ -29,12 +29,13 @@ import { generateBrushTexturePixels, isBuiltinTextureId } from '../core/brushTex
 import { celAt, uid, type Cel, type ClumsyloopDocument, type Layer } from '../core/document';
 import { mat3FromTRS } from '../core/math';
 import type { InputSample, RGB, Stamp } from '../core/types';
+import type { FloodFillResponse } from '../workers/floodFill.worker';
 import { Renderer } from './renderer';
 
 export class Engine {
   readonly renderer: Renderer;
   readonly doc: ClumsyloopDocument;
-  readonly activeLayerId: string;
+  private _activeLayerId: string;
 
   private builder: StrokeBuilder | null = null;
   private strokeBrush: BrushPreset | null = null;
@@ -43,13 +44,27 @@ export class Engine {
   constructor(renderer: Renderer, doc: ClumsyloopDocument, activeLayerId: string) {
     this.renderer = renderer;
     this.doc = doc;
-    this.activeLayerId = activeLayerId;
+    this._activeLayerId = activeLayerId;
     this.renderer.setDocumentSize(doc.width, doc.height);
   }
 
+  get activeLayerId(): string {
+    return this._activeLayerId;
+  }
+
+  /** Switches which layer strokes/fills write into. No layers panel uses
+   *  this yet (`DrawingCanvas` only ever has one fixed layer) — added so
+   *  bucket fill's reference-layer behavior (painting one layer using
+   *  another's boundaries) has a real way to be exercised at all, by a
+   *  future layers panel or a test. */
+  setActiveLayer(id: string) {
+    if (!this.doc.layers.some((l) => l.id === id)) throw new Error(`Engine: no layer with id ${id}`);
+    this._activeLayerId = id;
+  }
+
   private get activeLayer(): Layer {
-    const layer = this.doc.layers.find((l) => l.id === this.activeLayerId);
-    if (!layer) throw new Error(`Engine: no layer with id ${this.activeLayerId}`);
+    const layer = this.doc.layers.find((l) => l.id === this._activeLayerId);
+    if (!layer) throw new Error(`Engine: no layer with id ${this._activeLayerId}`);
     return layer;
   }
 
@@ -101,6 +116,87 @@ export class Engine {
 
   clearActiveLayer() {
     this.renderer.clear(this.activeCel().surface);
+    this.renderAndPresent();
+  }
+
+  /** Lazy worker for the CPU-side part of `floodFill` — one thread for
+   *  the Engine's whole life, not one per fill; the worker doesn't keep
+   *  anything between messages. */
+  private floodWorker: Worker | null = null;
+  private floodPending = new Map<number, (r: FloodFillResponse) => void>();
+  private floodRequestId = 0;
+  private getFloodWorker(): Worker {
+    if (!this.floodWorker) {
+      const worker = new Worker(new URL('../workers/floodFill.worker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = (e: MessageEvent<FloodFillResponse>) => {
+        const resolve = this.floodPending.get(e.data.id);
+        if (!resolve) return;
+        this.floodPending.delete(e.data.id);
+        resolve(e.data);
+      };
+      this.floodWorker = worker;
+    }
+    return this.floodWorker;
+  }
+
+  private runFloodFillWorker(
+    reference: Uint8Array,
+    target: Uint8Array,
+    w: number,
+    h: number,
+    sx: number,
+    sy: number,
+    tolerance: number,
+    expand: number,
+    gapClose: number,
+    color: RGB,
+    alphaLock: boolean,
+  ): Promise<FloodFillResponse> {
+    return new Promise((resolve) => {
+      const worker = this.getFloodWorker();
+      const id = ++this.floodRequestId;
+      this.floodPending.set(id, resolve);
+      // Both buffers are transferred, not copied — the caller already
+      // took its own copy of `target` before this (see `floodFill`), so
+      // it doesn't need either one back.
+      worker.postMessage({ id, reference, target, w, h, sx, sy, tolerance, expand, gapClose, color, alphaLock }, [reference.buffer, target.buffer]);
+    });
+  }
+
+  /**
+   * Bucket fill (task 2.7) on the active layer, at document point `(x, y)`.
+   *
+   * The reference is the whole composited document at the current frame,
+   * not the active layer's own cel: coloring an animation wants the
+   * bucket to respect ink on ANY visible layer above the one being
+   * painted (lineart on one layer, color on another) — see `checkpoint.md`
+   * for the reference-layer-fill reasoning. The write always goes to the
+   * active layer's cel.
+   *
+   * `gapClose` (pixels of line-break the fill can't leak through) is a
+   * distinct knob from `expand` (pixels the fill bleeds past the wall's
+   * edge, to cover antialiasing) — see `core/flood.ts`.
+   *
+   * No-op on a locked, hidden, or non-`draw` layer — filling a camera
+   * photo or a locked layer doesn't make sense. No undo yet: this engine
+   * doesn't wire `history.ts` for strokes either (see the file header),
+   * so a single tool having it would be inconsistent, not an improvement.
+   */
+  async floodFill(x: number, y: number, color: RGB, tolerance = 0.15, expand = 2, gapClose = 2): Promise<void> {
+    const layer = this.activeLayer;
+    if (layer.locked || !layer.visible || layer.kind !== 'draw') return;
+    const w = this.doc.width;
+    const h = this.doc.height;
+    const sx = Math.floor(x);
+    const sy = Math.floor(y);
+    if (sx < 0 || sy < 0 || sx >= w || sy >= h) return;
+
+    const reference = this.renderer.readRect(this.renderer.renderDocumentFrame(this.doc, 0), 0, 0, w, h);
+    const cel = this.activeCel();
+    const target = this.renderer.readRect(cel.surface, 0, 0, w, h);
+
+    const { sub, rect } = await this.runFloodFillWorker(reference, target, w, h, sx, sy, tolerance, expand, gapClose, color, layer.alphaLock);
+    this.renderer.writeRect(cel.surface, rect.x, rect.y, rect.x2 - rect.x, rect.y2 - rect.y, sub);
     this.renderAndPresent();
   }
 

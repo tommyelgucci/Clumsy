@@ -155,3 +155,16 @@ is literally what the app produces.
   ccapture.js's technique (GPU-side accumulation across sub-frames,
   WebGL2 `EXT_color_buffer_float`) is the concrete approach to reach for
   if this ever gets built.
+- **An audio track + timeline scrubbing (for lip-sync/dialogue timing)
+  was requested alongside the bucket fill tool (2026-09-10, from a
+  reference video) but deliberately NOT built.** Real, out-of-proportion
+  scope for where this project is: `document.ts` already cut `AudioTrack`
+  from v1 on purpose (see its own port notes), and there is no multi-frame
+  timeline UI in Clumsyloop at all yet for a playhead to scrub across —
+  building audio scrubbing would mean building that timeline first, which
+  is really task 2.3's territory (still blocked on phase 1's device
+  verification) more than a bolt-on. It's also a mismatch with this
+  project's own stated identity: dialogue/lip-sync timing is Trace's
+  use case (a general 2D animation tool), not a short stop-motion clip
+  for TikTok/Reels. Revisit only if the owner decides Clumsyloop's scope
+  should grow to include it — not a default next step.

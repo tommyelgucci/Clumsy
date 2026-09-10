@@ -12,16 +12,22 @@ import { create } from 'zustand';
 import { DEFAULT_BRUSHES } from '../core/brush';
 import type { RGB } from '../core/types';
 
+export type ToolMode = 'draw' | 'bucket';
+
 interface ToolState {
+  mode: ToolMode;
   activeBrushId: string;
   activeColor: RGB;
+  setMode: (mode: ToolMode) => void;
   setActiveBrush: (id: string) => void;
   setActiveColor: (color: RGB) => void;
 }
 
 export const useTool = create<ToolState>((set) => ({
+  mode: 'draw',
   activeBrushId: DEFAULT_BRUSHES[0].id,
   activeColor: { r: 0.1, g: 0.1, b: 0.1 },
+  setMode: (mode) => set({ mode }),
   setActiveBrush: (id) => set({ activeBrushId: id }),
   setActiveColor: (color) => set({ activeColor: color }),
 }));

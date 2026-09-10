@@ -1,5 +1,122 @@
 # Checkpoint — Progress log
 
+### 2026-09-10 — Task 2.7 (new): bucket fill — tolerance, edge expansion, real gap closure, reference-layer fill
+
+Owner brought two feature ideas from a reference video (a smart bucket
+tool, and an audio timeline), both written up as prompts addressed to
+"Trace." Confirmed they were meant for Clumsyloop, then split the
+decision in two rather than building either one blind: bucket fill fits
+what CLAUDE.md already says this app draws (dialogue bubbles, illustrated
+backgrounds — flat-color fills are exactly that workflow); an audio
+timeline doesn't — `document.ts` already cut `AudioTrack` from v1 scope on
+purpose, and there's no multi-frame timeline UI in Clumsyloop at all yet
+for anything to scrub across. Owner chose to build both anyway; this
+entry covers the bucket tool. The audio timeline is real, larger, blocked
+work of its own — not started this session, flagged here so intent isn't
+lost.
+
+Read Trace's actual shipped implementation before porting anything
+(`core/flood.ts`, `workers/floodFill.worker.ts`, and `Engine.floodFill`'s
+call site) rather than assuming the reference video's feature list maps
+1:1 onto what Trace has. It didn't: Trace's own bucket tool only has
+tolerance + edge expansion/bleed (`growFilled`, which grows the FILLED
+region after the scanline fill already ran) — no actual gap closure.
+A real break in the line still leaks a plain tolerance flood right
+through it in Trace today. Since gap closure was one of the two features
+the owner explicitly asked for, shipping only tolerance+bleed here would
+have quietly under-delivered while looking complete. Built it for real
+instead:
+
+- `buildWallMask` — the exact inverse of `floodMatch`'s per-pixel
+  tolerance test: 1 where a pixel differs from the seed color by more
+  than tolerance (a "wall" the fill can't cross), 0 where it can.
+- `closeGaps` — a genuine morphological close (iterated 3x3 dilate, then
+  the same count of 3x3 erode passes) on that wall mask, bridging breaks
+  up to about `2*radius` pixels without permanently widening the wall
+  anywhere a gap didn't need bridging. Same "iterate a 1px-radius
+  operation `n` times instead of a bigger kernel" style `growFilled`
+  already uses, for consistency.
+- `floodOpenMask` — the same scanline algorithm as `floodMatch` (pulled
+  out into a shared `scanlineFill` so both share one tested core), but
+  flooding over the closed wall mask instead of re-testing color per pixel.
+
+This is a real pipeline addition beyond what Trace ships, not a redesign
+of what got ported — `floodMatch`/`growFilled`/`applyFillColor`/`extractRect`
+are otherwise verbatim ports (English comments only), same exception
+`brush.ts`/`palettes.ts` already have.
+
+`gl/renderer.ts` gained `writeRect` (sub-rectangle GPU write-back,
+`readRect`'s missing other half — needed since a fill only ever touches
+a small bounding box, not the whole cel). `workers/floodFill.worker.ts`
+runs the whole wall→close→flood→grow→paint pipeline off the main thread,
+same reasoning Trace's version gives (CPU-heavy, no WebGL/DOM needed,
+doesn't want to share the GPU context). `gl/engine.ts` gained `floodFill`:
+reference = the whole composited document at the current frame (any
+visible layer's ink bounds the fill, not just the active layer's own
+cel — the reference-layer-fill behavior); the write always goes to the
+active layer's cel. No-op on a locked/hidden/non-`draw` layer, no undo —
+consistent with how strokes already work in this engine (see 2.6).
+
+`Engine.activeLayerId` was `readonly` since task 2.6 — changed to a
+getter + new `setActiveLayer()` method, purely so reference-layer fill
+had any way to be exercised at all: `DrawingCanvas` still only ever
+creates one fixed layer (no layers panel yet), so a person can't actually
+reach this behavior through the UI today. Named honestly rather than
+quietly left implicit — the engine is correct, there's just no UI yet
+that lets two layers coexist.
+
+New `state/tool.ts` field: `mode: 'draw' | 'bucket'`. `DrawingCanvas.tsx`
+gained a Draw/Bucket toggle and three sliders (tolerance, expand, gap
+closure) — a bucket tap doesn't set pointer capture or track a drag,
+just fires `floodFill` once.
+
+Verification: 11 new tests in `core/flood.test.ts` (the refactored
+`floodMatch` re-checked unchanged; `buildWallMask`/`closeGaps`/
+`floodOpenMask` proven directly — a synthetic ring with a real 1px gap
+leaks with a plain tolerance flood and is correctly contained once
+`closeGaps` runs first). `npm test` is 131/131.
+
+The browser-level verification (`scripts/bucket-smoke.mjs`, Playwright)
+surfaced two real bugs along the way, neither one in the flood-fill code
+itself:
+
+1. **The UI's fill is fire-and-forget.** `DrawingCanvas`'s click handler
+   calls `void engine.floodFill(...)` without awaiting it (a Worker round
+   trip), so a plain `page.mouse.click()` returns long before the fill
+   lands. Checking pixels immediately produced nonsense (a fill from one
+   test appearing to leak into a LATER test's region, once it finally
+   resolved). Fixed the test by polling the filled cel's own
+   `surface.version` (bumped by `writeRect`) instead of checking
+   immediately or guessing a sleep duration.
+2. **The brush engine's One Euro smoothing filter has genuine
+   steady-state lag behind constant-velocity motion** — confirmed
+   directly, bypassing Playwright entirely, by calling
+   `engine.beginStroke`/`pushStroke`/`endStroke` with dense synthetic
+   samples along a straight line: the drawn line stopped several pixels
+   short of the declared endpoint regardless of sample density, only
+   fixed by adding samples that "dwell" at the target instead of adding
+   more samples in transit. This is expected, correct behavior for a
+   low-pass filter smoothing pointer input (ported verbatim from
+   Trace, "battle-tested" per CLAUDE.md) — a real hand naturally slows
+   down at the end of a stroke; a scripted drag that stops moving the
+   instant it arrives doesn't. Fixed the test's `dragStroke` helper to
+   dwell at each stroke's endpoint, not the brush engine.
+
+A third issue was a plain test-authoring mistake, not a finding: an early
+draft of the gap-closure rectangle used `x` coordinates up to 420 on a
+360px-wide document — silently drew nothing there at all. Caught by
+scanning the actual rendered pixels directly rather than trusting the
+coordinates on paper.
+
+`scripts/bucket-smoke.mjs` re-runs `renderer-smoke`/`persistence-smoke`/
+`drawing-smoke` alongside it each time it was iterated on — all four
+Playwright smoke tests pass together, re-run twice for the new one to
+rule out flakiness. `npm run build`/`lint`/`test` all clean.
+
+**Marked 2.7 `done`** in `tasks.json`.
+
+---
+
 ### 2026-09-09 — Task 2.6 (new): the drawing UI — brush.ts and palettes.ts finally have a consumer
 
 Asked what else to build while phase 1 stays blocked on device access.

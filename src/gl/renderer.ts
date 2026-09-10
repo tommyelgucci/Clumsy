@@ -588,6 +588,19 @@ export class Renderer {
     return out;
   }
 
+  /** Writes already-premultiplied RGBA pixels into a sub-rectangle —
+   *  the bucket tool's write-back path (task 2.7): the CPU-side flood
+   *  fill only touches a small bounding box, so there's no reason to
+   *  re-upload the whole surface. */
+  writeRect(s: Surface, x: number, y: number, w: number, h: number, pixels: Uint8Array) {
+    if (w <= 0 || h <= 0) return;
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, s.tex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    s.empty = false;
+    s.version++;
+  }
+
   /** The whole surface as straight-alpha (un-premultiplied) `ImageData` —
    *  what both PNG export and `canvas.putImageData` expect. */
   toImageData(s: Surface): ImageData {
