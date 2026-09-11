@@ -64,11 +64,39 @@
  * the whole cel read back once at `beginStroke`, before anything is
  * drawn, with only the final dirty rect (`expandRect` per stamp, same
  * padding Trace uses) kept in the `Command`.
+ *
+ * Keyframed transforms (task 2.16): `core/document.ts`'s `TransformTrack`/
+ * `Channel` model (x/y/scale/rotation/opacity, each independently
+ * keyframeable with easing) was ported from Trace back in task 2.1 and
+ * the renderer has sampled it at the composited frame ever since
+ * (`rasterizeLayer`'s transform matrix, `composite`'s opacity term) —
+ * nothing before this task ever let a user actually SET a keyframe, so
+ * every layer just sat at its identity transform. `setLayerTransformValue`
+ * mirrors Trace's own convention exactly: editing a property with no
+ * keyframes yet changes its static `base` value; once any keyframe
+ * exists on that property, further edits add/move a keyframe at
+ * `currentFrame` instead — so animating a layer doesn't require an
+ * explicit "start animating" step before every adjustment, only before
+ * the first one (`toggleKeyframeHere` is that explicit step, and also
+ * how to remove one).
  */
 import { History, type Command } from '../core/history';
 import { StrokeBuilder, type BrushPreset } from '../core/brush';
 import { generateBrushTexturePixels, isBuiltinTextureId } from '../core/brushTexture';
-import { celAt, clampFrame, newLayer, uid, type Cel, type ClumsyloopDocument, type Layer } from '../core/document';
+import {
+  celAt,
+  clampFrame,
+  newLayer,
+  removeKeyframe,
+  sampleChannel,
+  setKeyframe,
+  uid,
+  type Cel,
+  type ClumsyloopDocument,
+  type Keyframe,
+  type Layer,
+  type TransformProp,
+} from '../core/document';
 import { extractRect } from '../core/flood';
 import { mat3FromTRS } from '../core/math';
 import { clampRect, emptyRect, expandRect, rectIsEmpty, type InputSample, type RGB, type Stamp } from '../core/types';
@@ -327,6 +355,89 @@ export class Engine {
     const layer = this.doc.layers.find((l) => l.id === this._activeLayerId);
     if (!layer) throw new Error(`Engine: no layer with id ${this._activeLayerId}`);
     return layer;
+  }
+
+  /** The active layer's transform property, sampled at the current
+   *  frame — what a keyframe UI shows as "the value right now". */
+  getLayerTransformValue(prop: TransformProp): number {
+    return sampleChannel(this.activeLayer.transform[prop], this._currentFrame);
+  }
+
+  /** Whether this property has been animated at all (any keyframe,
+   *  anywhere on the timeline) — distinct from `hasKeyframeAtCurrentFrame`,
+   *  which asks about this exact frame specifically. */
+  layerTransformIsKeyframed(prop: TransformProp): boolean {
+    return this.activeLayer.transform[prop].keys.length > 0;
+  }
+
+  hasKeyframeAtCurrentFrame(prop: TransformProp): boolean {
+    return this.activeLayer.transform[prop].keys.some((k) => k.frame === this._currentFrame);
+  }
+
+  private snapshotChannel(prop: TransformProp): { base: number; keys: Keyframe[] } {
+    const ch = this.activeLayer.transform[prop];
+    return { base: ch.base, keys: ch.keys.map((k) => ({ ...k })) };
+  }
+
+  private restoreChannel(prop: TransformProp, snap: { base: number; keys: Keyframe[] }) {
+    const ch = this.activeLayer.transform[prop];
+    ch.base = snap.base;
+    ch.keys = snap.keys.map((k) => ({ ...k }));
+  }
+
+  /** Live preview during a drag — mutates the channel directly, with no
+   *  history entry, so a whole slider gesture doesn't create one undo
+   *  step per pixel dragged. Pair with `commitLayerTransform` (see its
+   *  own doc comment) once the gesture ends. */
+  previewLayerTransformValue(prop: TransformProp, value: number) {
+    const layer = this.activeLayer;
+    const ch = layer.transform[prop];
+    if (ch.keys.length > 0) setKeyframe(ch, this._currentFrame, value);
+    else ch.base = value;
+    this.renderAndPresent();
+  }
+
+  /** Closes out a drag started with `snapshotLayerTransform` into exactly
+   *  one undo step — a no-op if the channel ended up identical to where
+   *  it started (a click with no actual drag). */
+  commitLayerTransform(prop: TransformProp, before: { base: number; keys: Keyframe[] }) {
+    const after = this.snapshotChannel(prop);
+    if (before.base === after.base && JSON.stringify(before.keys) === JSON.stringify(after.keys)) return;
+    this.history.push({
+      label: `Adjust ${prop}`,
+      redo: () => this.restoreChannel(prop, after),
+      undo: () => this.restoreChannel(prop, before),
+    });
+  }
+
+  /** Snapshot to pass to `commitLayerTransform` once a drag gesture ends —
+   *  split out from it only so the UI can capture "before" at
+   *  pointer-down and "after" at pointer-up, rather than needing the
+   *  whole gesture's value stream threaded through one call. */
+  snapshotLayerTransform(prop: TransformProp): { base: number; keys: Keyframe[] } {
+    return this.snapshotChannel(prop);
+  }
+
+  /** Explicit "stopwatch" toggle: adds a keyframe at the current frame
+   *  (freezing whatever value is showing there right now, so toggling it
+   *  on never visibly jumps the layer) if there isn't one already, or
+   *  removes it if there is. Always undoable in one step — unlike a
+   *  slider drag, a single click never needs begin/commit splitting. */
+  toggleKeyframeHere(prop: TransformProp) {
+    const layer = this.activeLayer;
+    const ch = layer.transform[prop];
+    const frame = this._currentFrame;
+    const before = this.snapshotChannel(prop);
+    const hadKeyHere = ch.keys.some((k) => k.frame === frame);
+    if (hadKeyHere) removeKeyframe(ch, frame);
+    else setKeyframe(ch, frame, sampleChannel(ch, frame));
+    const after = this.snapshotChannel(prop);
+    this.history.push({
+      label: hadKeyHere ? `Remove ${prop} keyframe` : `Add ${prop} keyframe`,
+      redo: () => this.restoreChannel(prop, after),
+      undo: () => this.restoreChannel(prop, before),
+    });
+    this.renderAndPresent();
   }
 
   /** The active layer's cel held at `frame` (defaults to the current

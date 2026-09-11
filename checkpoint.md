@@ -1,5 +1,52 @@
 # Checkpoint — Progress log
 
+### 2026-09-11 — Task 2.16 (new): keyframed layer transforms — the Transform panel
+
+Owner asked to push further on the animation engine specifically —
+keyframes and lasso selection — after the timeline and format picker.
+`core/document.ts`'s `TransformTrack`/`Channel` model (x/y/scale/rotation/
+opacity, each independently keyframeable with easing) has existed since
+task 2.1, ported from Trace, and the renderer has sampled it at the
+composited frame ever since — nothing before this task ever let a user
+actually set a keyframe, so every layer sat permanently at its identity
+transform.
+
+`gl/engine.ts` gained read helpers plus `previewLayerTransformValue`
+(live drag feedback, no history), `snapshotLayerTransform`/
+`commitLayerTransform` (collapses a whole slider drag into one undo
+step), and `toggleKeyframeHere` (the explicit stopwatch add/remove) — all
+on the active layer, mirroring Trace's own convention read directly from
+its `core/engine.ts`: a property with no keyframes yet is a plain static
+edit to its base value; once any keyframe exists on it, further edits
+add/move a keyframe at the current frame instead. Needed zero renderer
+changes — `rasterizeLayer`/`composite` already sampled `layer.transform`
+since task 2.1.
+
+The one-undo-step-per-drag behavior needed real handling: React's
+onChange for a range input fires on every intermediate value through a
+whole drag (it's wired to the native `input` event, not `change`), so a
+naive push-per-onChange would mean one undo step per pixel dragged. New
+`TransformSlider` captures a channel snapshot lazily on the first
+onChange since the last commit and commits once on pointerup/blur — the
+same begin/commit idea as Beautyapp's own `Slider.tsx`, reimplemented on
+native events rather than porting that component for one row of sliders.
+
+New `TransformPanel.tsx` (a 6th floating panel) with a slider + keyframe
+toggle per property; rotation is stored in radians (unchanged, matching
+`mat3FromTRS`) but shown to the user in degrees, a display-only
+conversion. Verified via a new `scripts/keyframe-smoke.mjs` checking
+actual composited pixels, not just engine state: a static edit visibly
+moves a drawn dot and undoes/redoes as one step regardless of onChange
+event count; the stopwatch toggle adds/removes keyframes at the exact
+current frame without disturbing others. Re-verified the full 9-script
+Playwright suite with zero changes needed. 131 unit tests, `tsc`, `lint`,
+and `build` all clean.
+
+Deliberately out of scope: a visual keyframe track/timeline scrubber,
+easing-curve editing (every keyframe uses the default `easeInOut`), and
+a canvas transform gizmo (dragging the layer directly with a pointer) —
+real follow-ups, not oversights.
+
 ### 2026-09-11 — Task 2.15 (new): canvas format picker at project creation
 
 The other confirmed-but-unbuilt piece from the direction correction:

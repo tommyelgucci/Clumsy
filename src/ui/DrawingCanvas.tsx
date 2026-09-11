@@ -8,13 +8,14 @@ import { Engine } from '../gl/engine';
 import { Renderer } from '../gl/renderer';
 import './drawing.css';
 import { FloatingPanel } from './FloatingPanel';
-import { BucketIcon, LayersIcon, NewProjectIcon, PencilIcon, RedoIcon, TrashIcon, UndoIcon } from './icons';
+import { BucketIcon, LayersIcon, NewProjectIcon, PencilIcon, RedoIcon, TransformIcon, TrashIcon, UndoIcon } from './icons';
 import { LayersPanel } from './LayersPanel';
 import { Timeline } from './Timeline';
+import { TransformPanel } from './TransformPanel';
 import { usePalettes } from '../state/palettes';
 import { useTool } from '../state/tool';
 
-type PanelId = 'layers' | 'brush' | 'color' | 'project';
+type PanelId = 'layers' | 'brush' | 'color' | 'project' | 'transform';
 
 /** Tilt arrives in degrees; the brush engine wants radians — same
  *  conversion Trace's `ui/CanvasView.tsx` uses (`tiltToSpherical`). */
@@ -318,9 +319,18 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
         <button className="cl-railbtn" aria-pressed={activePanel === 'layers'} onClick={() => togglePanel('layers')} aria-label="Layers" title="Layers">
           <LayersIcon />
         </button>
+        <button className="cl-railbtn" aria-pressed={activePanel === 'transform'} onClick={() => togglePanel('transform')} aria-label="Transform" title="Transform">
+          <TransformIcon />
+        </button>
       </div>
 
       {ready && engineRef.current && <Timeline engine={engineRef.current} />}
+
+      {activePanel === 'transform' && ready && engineRef.current && (
+        <FloatingPanel title="Transform" onClose={() => setActivePanel(null)}>
+          <TransformPanel engine={engineRef.current} />
+        </FloatingPanel>
+      )}
 
       {activePanel === 'project' && onNewProject && (
         <FloatingPanel title="New project" onClose={() => setActivePanel(null)}>

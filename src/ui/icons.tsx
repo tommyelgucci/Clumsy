@@ -175,6 +175,23 @@ export function NewProjectIcon({ size = 16 }: IconProps) {
   );
 }
 
+export function TransformIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>
+      <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+      <rect x="7" y="7" width="10" height="10" rx="1.5" />
+    </svg>
+  );
+}
+
+export function KeyframeIcon({ size = 16, filled = false }: IconProps & { filled?: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common} fill={filled ? 'currentColor' : 'none'}>
+      <path d="M12 3 21 12 12 21 3 12Z" />
+    </svg>
+  );
+}
+
 export function OnionIcon({ size = 16 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>
