@@ -1,24 +1,26 @@
 /*
- * Visual + layout pass for the drawing screen (tasks 2.11-2.12) — no
+ * Visual + layout pass for the drawing screen (tasks 2.11-2.13) — no
  * engine or behavior changes, purely the app-shell chrome around it. Up
  * to task 2.11, every button here was unstyled default HTML: work went
  * into the rendering/brush/undo/layers engine, not the screen around it
- * (see checkpoint.md's earlier entries). Dark, canvas-app themed —
- * #121214/#17171a match gl/renderer.ts's own WebGL clear color so the
- * page doesn't clash with the canvas it surrounds.
+ * (see checkpoint.md's earlier entries).
  *
- * Layout structure (task 2.12, in response to "the canvas scrolls out of
- * view while picking a color" — a real gap 2.11 didn't cover, unlike any
- * actual drawing app): `.cl-app` is a fixed-height flex column that never
- * scrolls itself; `.cl-canvas-col` holds the canvas + toolbar and never
- * shrinks below what the canvas needs; `.cl-panels` is the ONLY thing
- * that scrolls, capped to a fraction of the viewport on narrow screens so
- * the canvas always stays fully visible no matter how far you scroll
- * inside Layers/Tool/Brush/Color. At >= 700px (tablet/desktop), `.cl-main`
- * switches from a column to a row: the canvas gets the majority of a much
- * wider stage instead of a phone-width column centered in empty space,
- * and `.cl-panels` becomes a sidebar with its own independent scroll —
- * the canvas is never affected by scrolling the panel either way.
+ * Layout structure (task 2.13, replacing 2.12's docked-panel approach):
+ * ported the actual pattern from `tommyelgucci/draw` (Trace, the sibling
+ * project this whole engine is architected after) rather than reinventing
+ * one — `.cl-canvas` is `position: fixed; inset: 0`, filling the entire
+ * screen behind everything else; `.cl-rail--left`/`.cl-rail--top` are
+ * small floating, translucent, blurred toolbars anchored to an edge;
+ * `.cl-panel` (Layers/Brush/Color) is a floating, closeable overlay that
+ * sits OVER the canvas instead of sharing layout space with it. This is
+ * a structural improvement over task 2.12's docked/scrolling panel, not
+ * just a re-skin: the canvas is now always its full natural size — no
+ * flex column/row switching by viewport width, no capped scroll region,
+ * because there's no permanent panel to make room for at all. Color
+ * tokens and the rail/panel look are adapted from Trace's own
+ * `src/styles.css`, independently landing on nearly the same dark
+ * palette Clumsyloop already had from task 2.11 — kept as-is rather than
+ * force an exact match, since the two were already this close.
  *
  * Plain CSS, not Tailwind or a component library: this project has no
  * such dependency yet and one screen doesn't justify adding one. Every
@@ -37,18 +39,26 @@
   --accent: #6c8cff;
   --accent-text: #0c1230;
   --danger: #ff6b6b;
+  --rail-gap: 10px;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  box-sizing: border-box;
-  height: 100vh;
-  height: 100dvh; /* accounts for mobile browser chrome collapsing/expanding */
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow: hidden;
+  /* Stops iOS from intercepting a drag to scroll/zoom the page instead of
+     drawing — the same reason Trace sets this on html/body/#root; scoped
+     to this subtree only, since App.tsx's dev harnesses below still want
+     normal page behavior. */
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
 }
 
 .cl-app *,
@@ -57,157 +67,200 @@
   box-sizing: border-box;
 }
 
-.cl-title {
-  flex: none;
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text-dim);
-}
-
-/* Canvas (left/top) and panels (right/bottom) side by side or stacked. */
-.cl-main {
-  flex: 1;
-  min-height: 0; /* lets children scroll internally instead of overflowing the page */
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow: hidden;
-}
-
-.cl-canvas-col {
-  /* flex:1 (not flex:none) so this column's size comes top-down from
-     `.cl-main`'s definite height, not bottom-up from its own content —
-     the canvas's rendered size must stay stable regardless of sibling
-     text changing width/height (e.g. "Undo" becoming "Undo (Stroke)"
-     once there's something to undo), or every cached pointer-to-canvas
-     coordinate computed before that point goes stale. */
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.cl-canvas-wrap {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 10px;
-}
-
 .cl-canvas {
-  /* The canvas's intrinsic bitmap is a fixed 360x640 (DOC_WIDTH/HEIGHT) —
-     without an explicit display size, a replaced element like <canvas>
-     never grows past its intrinsic pixels, so on a roomy iPad/desktop
-     `.cl-canvas-wrap` it would otherwise sit tiny in a sea of empty
-     space. object-fit:contain scales it to fill whatever room
-     `.cl-canvas-wrap` actually has, up or down, preserving aspect ratio
-     — the standard way any real drawing app fills its canvas area
-     regardless of the document's own pixel resolution. */
+  /* Fills the entire stage — the canvas IS the background, same as
+     Trace's `.canvas-surface`. Its intrinsic bitmap is a fixed 360x640
+     (DOC_WIDTH/HEIGHT) and a replaced element never grows past its own
+     pixel size without an explicit display size, so without
+     object-fit:contain it would sit tiny in the middle of the screen on
+     anything bigger than its native resolution. */
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
-  border-radius: 8px;
   touch-action: none;
   cursor: crosshair;
   display: block;
 }
 
 .cl-status {
-  flex: none;
+  position: absolute;
+  left: 50%;
+  bottom: var(--rail-gap);
+  transform: translateX(-50%);
+  z-index: 15;
   margin: 0;
   font-size: 12px;
   color: var(--text-dim);
-  text-align: center;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  padding: 3px 10px;
+  border-radius: 999px;
+  pointer-events: none;
 }
 
-/* The only scrolling region on narrow screens — capped so the canvas
-   above it never gets pushed out of view, no matter how much content
-   Layers/Tool/Brush/Color hold. */
-.cl-panels {
-  flex: none;
-  max-height: 42vh;
-  overflow-y: auto;
+/* -- Floating rails (tool icons, undo/redo, panel toggles) -- */
+
+.cl-rail {
+  position: absolute;
+  z-index: 20;
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-right: 2px; /* room for the scrollbar so it doesn't sit on content */
-}
-
-@media (min-width: 700px) {
-  .cl-app {
-    max-width: 1100px;
-    margin: 0 auto;
-  }
-
-  .cl-main {
-    flex-direction: row;
-  }
-
-  .cl-canvas-col {
-    flex: 2;
-    height: 100%;
-  }
-
-  .cl-panels {
-    flex: 1;
-    max-width: 340px;
-    max-height: none; /* the sidebar fills the column and scrolls on its own */
-  }
-}
-
-/* -- Toolbar: Undo/Redo/Clear as a compact icon row -- */
-
-.cl-toolbar {
-  flex: none;
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-}
-
-.cl-iconbtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--surface);
+  gap: 4px;
+  padding: 6px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
   border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.cl-rail--left {
+  left: var(--rail-gap);
+  top: 50%;
+  transform: translateY(-50%);
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  max-height: calc(100% - 2 * var(--rail-gap));
+  overflow-y: auto;
+}
+
+.cl-rail--top {
+  top: var(--rail-gap);
+  right: var(--rail-gap);
+  align-items: center;
+}
+
+.cl-rail-divider {
+  background: var(--border);
+}
+
+.cl-rail--top .cl-rail-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 4px;
+}
+
+.cl-rail--left .cl-rail-divider {
+  height: 1px;
+  width: 28px;
+  margin: 2px 0;
+}
+
+.cl-railbtn {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text);
-  border-radius: 10px;
-  padding: 8px 12px;
-  font-size: 13px;
   cursor: pointer;
-  transition: background-color 120ms, border-color 120ms, opacity 120ms;
+  transition: background-color 120ms, color 120ms, transform 80ms;
 }
 
-.cl-iconbtn:hover:not(:disabled) {
+.cl-railbtn:hover:not(:disabled) {
   background: var(--surface-2);
-  border-color: #45454c;
 }
 
-.cl-iconbtn:disabled {
-  opacity: 0.4;
+.cl-railbtn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.cl-railbtn[aria-pressed='true'],
+.cl-railbtn.is-active {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.cl-railbtn:disabled {
+  opacity: 0.35;
   cursor: default;
 }
 
-.cl-iconbtn--danger:hover:not(:disabled) {
-  border-color: var(--danger);
+.cl-railbtn--ghost {
+  width: 30px;
+  height: 30px;
+  color: var(--text-dim);
+}
+
+.cl-railbtn--danger:hover:not(:disabled) {
+  background: var(--surface-2);
   color: var(--danger);
 }
 
-/* -- Section cards: Layers / Tool / Brush / Color, all the same shape -- */
+.cl-colorwell {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.35);
+}
+
+.cl-rail__sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 2px;
+}
+
+/* -- Floating panels: Layers / Brush / Color -- */
+
+.cl-panel {
+  position: absolute;
+  top: calc(var(--rail-gap) + 56px);
+  bottom: var(--rail-gap);
+  right: var(--rail-gap);
+  z-index: 30;
+  width: 320px;
+  max-width: calc(100vw - 2 * var(--rail-gap));
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(22px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.cl-panel__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cl-panel__head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cl-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* -- Section cards inside a panel body: Tool / Brush / Color group headers -- */
 
 .cl-section {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -228,7 +281,7 @@
   justify-content: space-between;
 }
 
-/* -- Segmented control: Draw / Bucket -- */
+/* -- Segmented control (kept for any future in-panel segmented choice) -- */
 
 .cl-segmented {
   display: inline-flex;
@@ -260,14 +313,15 @@
   font-weight: 600;
 }
 
-/* -- Bucket fill sliders -- */
+/* -- Bucket fill sliders (shown in the left rail when Bucket is active) -- */
 
 .cl-slider-row {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-dim);
+  width: 100%;
 }
 
 .cl-slider-row input[type='range'] {
@@ -295,7 +349,7 @@
   overflow-x: auto;
   padding-bottom: 2px;
   /* Fades the trailing edge so a scrollable row that overflows past the
-     card doesn't look like it's just been cut off mid-chip. */
+     panel doesn't look like it's just been cut off mid-chip. */
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
 }

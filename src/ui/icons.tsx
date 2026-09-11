@@ -120,3 +120,20 @@ export function PencilIcon({ size = 16 }: IconProps) {
     </svg>
   );
 }
+
+export function LayersIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>
+      <path d="m12 3 9 5-9 5-9-5 9-5Z" />
+      <path d="m3 13 9 5 9-5" />
+    </svg>
+  );
+}
+
+export function CloseIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}

@@ -16,6 +16,11 @@ import { ChevronDownIcon, ChevronUpIcon, EyeIcon, EyeOffIcon, LockIcon, PlusIcon
  * decorative (`aria-hidden`), so accessible names, and anything that
  * looks them up (Playwright's scripts/layers-smoke.mjs included), are
  * unaffected by this restyle.
+ *
+ * Rendered inside a `FloatingPanel` since task 2.13 — that component
+ * already supplies the "Layers" title and close button, so this no
+ * longer renders its own section header, only the "Add layer" action
+ * and the list.
  */
 export function LayersPanel({ engine }: { engine: Engine }) {
   const [, forceUpdate] = useState(0);
@@ -36,13 +41,10 @@ export function LayersPanel({ engine }: { engine: Engine }) {
 
   return (
     <div className="cl-section">
-      <div className="cl-section-header">
-        <h3 className="cl-section-title">Layers</h3>
-        <button className="cl-add-layer" onClick={() => engine.addLayer()}>
-          <PlusIcon size={14} />
-          Add layer
-        </button>
-      </div>
+      <button className="cl-add-layer" onClick={() => engine.addLayer()}>
+        <PlusIcon size={14} />
+        Add layer
+      </button>
       <ul className="cl-layer-list">
         {layersTopToBottom.map((layer) => {
           const isActive = layer.id === engine.activeLayerId;

@@ -6,10 +6,13 @@ import type { InputSample, RGB } from '../core/types';
 import { Engine } from '../gl/engine';
 import { Renderer } from '../gl/renderer';
 import './drawing.css';
-import { BucketIcon, PencilIcon, RedoIcon, TrashIcon, UndoIcon } from './icons';
+import { FloatingPanel } from './FloatingPanel';
+import { BucketIcon, LayersIcon, PencilIcon, RedoIcon, TrashIcon, UndoIcon } from './icons';
 import { LayersPanel } from './LayersPanel';
 import { usePalettes } from '../state/palettes';
 import { useTool } from '../state/tool';
+
+type PanelId = 'layers' | 'brush' | 'color';
 
 const DOC_WIDTH = 360;
 const DOC_HEIGHT = 640;
@@ -34,11 +37,20 @@ function tiltToSpherical(tiltX: number, tiltY: number) {
  * cels only ever come from the capture UI's shutter (task 2.3), still
  * blocked on device verification (see CLAUDE.md). Single frame regardless
  * of layer count: the timeline itself is also task 2.3's territory.
+ *
+ * Layout (task 2.13): the canvas fills the whole screen; floating icon
+ * rails (tools, undo/redo, panel toggles) and closeable overlay panels
+ * (Layers/Brush/Color) sit on top of it, ported from the exact pattern
+ * `tommyelgucci/draw` (Trace) already uses — see drawing.css's file
+ * header for why this replaces task 2.12's docked-panel approach rather
+ * than sitting alongside it.
  */
 export function DrawingCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
   const [ready, setReady] = useState(false);
+  const [activePanel, setActivePanel] = useState<PanelId | null>(null);
+  const togglePanel = (id: PanelId) => setActivePanel((p) => (p === id ? null : id));
   // Forces a re-render on every history change so the Undo/Redo buttons'
   // disabled state stays current — subscribed inside the same effect
   // that creates the engine (below), not via useSyncExternalStore: that
@@ -211,117 +223,121 @@ export function DrawingCanvas() {
 
   return (
     <div className="cl-app">
-      <h2 className="cl-title">Clumsyloop — Drawing</h2>
+      <canvas
+        ref={canvasRef}
+        id="drawing-canvas"
+        className="cl-canvas"
+        width={DOC_WIDTH}
+        height={DOC_HEIGHT}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={endStroke}
+        onPointerCancel={endStroke}
+      />
 
-      <div className="cl-main">
-        {/* The canvas column never scrolls and never shrinks below what
-            the canvas needs — see drawing.css's file header. Only
-            `.cl-panels` below scrolls, so picking a color or brush can
-            never push the canvas out of view. */}
-        <div className="cl-canvas-col">
-          <div className="cl-canvas-wrap">
-            <canvas
-              ref={canvasRef}
-              id="drawing-canvas"
-              className="cl-canvas"
-              width={DOC_WIDTH}
-              height={DOC_HEIGHT}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={endStroke}
-              onPointerCancel={endStroke}
-            />
-          </div>
-          <p className="cl-status">{ready ? 'Ready.' : 'Starting…'}</p>
-          <div className="cl-toolbar">
-            <button className="cl-iconbtn cl-iconbtn--danger" onClick={handleClear}>
-              <TrashIcon />
-              Clear
-            </button>
-            <button className="cl-iconbtn" onClick={() => engineRef.current?.undo()} disabled={!canUndo} title="Ctrl/Cmd+Z">
-              <UndoIcon />
-              Undo{canUndo ? ` (${history!.undoLabel})` : ''}
-            </button>
-            <button className="cl-iconbtn" onClick={() => engineRef.current?.redo()} disabled={!canRedo} title="Shift+Ctrl/Cmd+Z">
-              <RedoIcon />
-              Redo{canRedo ? ` (${history!.redoLabel})` : ''}
-            </button>
-          </div>
-        </div>
+      <p className="cl-status">{ready ? 'Ready.' : 'Starting…'}</p>
 
-        <div className="cl-panels">
-          {ready && engineRef.current && <LayersPanel engine={engineRef.current} />}
-
-          <div className="cl-section">
-            <h3 className="cl-section-title">Tool</h3>
-            <div className="cl-segmented">
-              <button onClick={() => setMode('draw')} aria-pressed={mode === 'draw'}>
-                <PencilIcon size={14} />
-                Draw
-              </button>
-              <button onClick={() => setMode('bucket')} aria-pressed={mode === 'bucket'}>
-                <BucketIcon size={14} />
-                Bucket
-              </button>
+      <div className="cl-rail cl-rail--left">
+        <button className="cl-railbtn" aria-pressed={mode === 'draw'} onClick={() => setMode('draw')} aria-label="Draw" title="Draw">
+          <PencilIcon />
+        </button>
+        <button className="cl-railbtn" aria-pressed={mode === 'bucket'} onClick={() => setMode('bucket')} aria-label="Bucket" title="Bucket fill">
+          <BucketIcon />
+        </button>
+        <button
+          className="cl-colorwell"
+          onClick={() => togglePanel('color')}
+          aria-label="Color"
+          aria-pressed={activePanel === 'color'}
+          title="Color"
+          style={{ background: rgbToHex(activeColor) }}
+        />
+        {mode === 'bucket' && (
+          <>
+            <span className="cl-rail-divider" />
+            <div className="cl-rail__sliders">
+              <label className="cl-slider-row">
+                Tolerance {tolerance.toFixed(2)}
+                <input type="range" min={0} max={1} step={0.01} value={tolerance} onChange={(e) => setTolerance(Number(e.target.value))} />
+              </label>
+              <label className="cl-slider-row">
+                Expand {expand}px
+                <input type="range" min={0} max={8} step={1} value={expand} onChange={(e) => setExpand(Number(e.target.value))} />
+              </label>
+              <label className="cl-slider-row">
+                Gap closure {gapClose}px
+                <input type="range" min={0} max={8} step={1} value={gapClose} onChange={(e) => setGapClose(Number(e.target.value))} />
+              </label>
             </div>
-            {mode === 'bucket' && (
-              <>
-                <label className="cl-slider-row">
-                  Tolerance {tolerance.toFixed(2)}
-                  <input type="range" min={0} max={1} step={0.01} value={tolerance} onChange={(e) => setTolerance(Number(e.target.value))} />
-                </label>
-                <label className="cl-slider-row">
-                  Expand {expand}px
-                  <input type="range" min={0} max={8} step={1} value={expand} onChange={(e) => setExpand(Number(e.target.value))} />
-                </label>
-                <label className="cl-slider-row">
-                  Gap closure {gapClose}px
-                  <input type="range" min={0} max={8} step={1} value={gapClose} onChange={(e) => setGapClose(Number(e.target.value))} />
-                </label>
-              </>
-            )}
-          </div>
+          </>
+        )}
+      </div>
 
-          <div className="cl-section">
-            <h3 className="cl-section-title">Brush</h3>
-            {BRUSH_CATEGORIES.map((category) => (
-              <div key={category} className="cl-chip-group">
-                <span className="cl-chip-group-label">{BRUSH_CATEGORY_LABELS[category]}</span>
-                <div className="cl-chip-row">
-                  {DEFAULT_BRUSHES.filter((b) => b.category === category).map((brush) => (
-                    <button key={brush.id} className="cl-chip" onClick={() => setActiveBrush(brush.id)} aria-pressed={brush.id === activeBrushId}>
-                      {brush.name}
-                    </button>
-                  ))}
-                </div>
+      <div className="cl-rail cl-rail--top">
+        <button className="cl-railbtn cl-railbtn--danger" onClick={handleClear} aria-label="Clear" title="Clear layer">
+          <TrashIcon />
+        </button>
+        <button className="cl-railbtn" onClick={() => engineRef.current?.undo()} disabled={!canUndo} aria-label={`Undo${canUndo ? ` (${history!.undoLabel})` : ''}`} title="Ctrl/Cmd+Z">
+          <UndoIcon />
+        </button>
+        <button className="cl-railbtn" onClick={() => engineRef.current?.redo()} disabled={!canRedo} aria-label={`Redo${canRedo ? ` (${history!.redoLabel})` : ''}`} title="Shift+Ctrl/Cmd+Z">
+          <RedoIcon />
+        </button>
+        <span className="cl-rail-divider" />
+        <button className="cl-railbtn" aria-pressed={activePanel === 'brush'} onClick={() => togglePanel('brush')} aria-label="Brush" title="Brush">
+          <PencilIcon />
+        </button>
+        <button className="cl-railbtn" aria-pressed={activePanel === 'layers'} onClick={() => togglePanel('layers')} aria-label="Layers" title="Layers">
+          <LayersIcon />
+        </button>
+      </div>
+
+      {activePanel === 'layers' && ready && engineRef.current && (
+        <FloatingPanel title="Layers" onClose={() => setActivePanel(null)}>
+          <LayersPanel engine={engineRef.current} />
+        </FloatingPanel>
+      )}
+
+      {activePanel === 'brush' && (
+        <FloatingPanel title="Brush" onClose={() => setActivePanel(null)}>
+          {BRUSH_CATEGORIES.map((category) => (
+            <div key={category} className="cl-chip-group">
+              <span className="cl-chip-group-label">{BRUSH_CATEGORY_LABELS[category]}</span>
+              <div className="cl-chip-row">
+                {DEFAULT_BRUSHES.filter((b) => b.category === category).map((brush) => (
+                  <button key={brush.id} className="cl-chip" onClick={() => setActiveBrush(brush.id)} aria-pressed={brush.id === activeBrushId}>
+                    {brush.name}
+                  </button>
+                ))}
               </div>
+            </div>
+          ))}
+        </FloatingPanel>
+      )}
+
+      {activePanel === 'color' && (
+        <FloatingPanel title="Color" onClose={() => setActivePanel(null)}>
+          <select className="cl-palette-select" value={paletteIndex} onChange={(e) => setPaletteIndex(Number(e.target.value))}>
+            {paletteGroups.map((group, i) => (
+              <option key={group.name} value={i}>
+                {group.name}
+              </option>
+            ))}
+          </select>
+          <div className="cl-swatch-row">
+            {paletteGroups[paletteIndex]?.colors.map((color, i) => (
+              <button
+                key={i}
+                className={`cl-swatch${color === activeColor ? ' cl-swatch--selected' : ''}`}
+                onClick={() => setActiveColor(color)}
+                aria-label={rgbToHex(color)}
+                style={{ background: rgbToHex(color) }}
+              />
             ))}
           </div>
-
-          <div className="cl-section">
-            <h3 className="cl-section-title">Color</h3>
-            <select className="cl-palette-select" value={paletteIndex} onChange={(e) => setPaletteIndex(Number(e.target.value))}>
-              {paletteGroups.map((group, i) => (
-                <option key={group.name} value={i}>
-                  {group.name}
-                </option>
-              ))}
-            </select>
-            <div className="cl-swatch-row">
-              {paletteGroups[paletteIndex]?.colors.map((color, i) => (
-                <button
-                  key={i}
-                  className={`cl-swatch${color === activeColor ? ' cl-swatch--selected' : ''}`}
-                  onClick={() => setActiveColor(color)}
-                  aria-label={rgbToHex(color)}
-                  style={{ background: rgbToHex(color) }}
-                />
-              ))}
-            </div>
-            <input className="cl-color-input" type="color" value={rgbToHex(activeColor)} onChange={(e) => setActiveColor(hexToRgb(e.target.value))} />
-          </div>
-        </div>
-      </div>
+          <input className="cl-color-input" type="color" value={rgbToHex(activeColor)} onChange={(e) => setActiveColor(hexToRgb(e.target.value))} />
+        </FloatingPanel>
+      )}
     </div>
   );
 }

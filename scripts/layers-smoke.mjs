@@ -26,6 +26,11 @@ const check = (name, ok, extra = '') => {
 await page.goto('http://127.0.0.1:5173/', { waitUntil: 'networkidle' });
 await page.waitForFunction(() => Boolean(window.__clumsyloopEngine), undefined, { timeout: 15000 });
 
+// The Layers panel is a closed-by-default floating overlay (task 2.13) —
+// open it once here so the rest of this script can find its contents
+// (Add layer, per-row rename/hide/lock/reorder/delete) in the DOM.
+await page.getByRole('button', { name: 'Layers' }).click();
+
 const canvasBox = await page.locator('#drawing-canvas').boundingBox();
 const docSize = await page.evaluate(() => ({ w: window.__clumsyloopEngine.doc.width, h: window.__clumsyloopEngine.doc.height }));
 // The canvas is `object-fit: contain` (task 2.12's responsive layout), so

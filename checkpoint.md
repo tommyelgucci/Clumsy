@@ -1,5 +1,68 @@
 # Checkpoint — Progress log
 
+### 2026-09-11 — Task 2.13 (new): layout rearchitecture — full-bleed canvas, floating rails and panels
+
+Follow-up to the direction correction below and to task 2.12's own known
+limits: the owner, after this session's correction that Clumsyloop is a
+general-purpose animation app (not TikTok-only), asked directly for the
+UI to actually look and behave like one — pointing at Trace as the
+reference. Cloned three sibling repos read-only for concrete ideas
+(`draw`/Trace, `Beautyapp`, `mis-proyectos` — the last turned out to be
+an unrelated monorepo, deprioritized) and confirmed by reading Trace's
+real `src/styles.css`/`controls.tsx`/`Toolbar.tsx` that its actual layout
+is not a docked sidebar at all: the canvas fills the whole viewport
+full-bleed, and small floating translucent "rail" toolbars plus closeable
+floating "panel" overlays sit on top of it, never sharing layout space
+with it. Task 2.12's docked-panel approach (a capped, scrolling panel
+permanently beside/below the canvas) fixed the two bugs it was built to
+fix but kept the more basic problem: the canvas still had to shrink to
+make room for the panel. Given the choice between a format-picker-only
+change, a docked-panel label-bug fix, or the full rearchitecture, the
+owner picked the rearchitecture.
+
+Rebuilt `drawing.css` around Trace's actual pattern: `.cl-app`
+(`position:fixed;inset:0`, full viewport), `.cl-canvas`
+(`position:absolute;inset:0;object-fit:contain`, no wrapping card or
+border), `.cl-rail`/`.cl-rail--left`/`.cl-rail--top` (small translucent,
+blurred, `position:absolute` pill toolbars with 40x40 icon-only
+buttons), and `.cl-panel` (a right-anchored `position:absolute` floating
+overlay card). Removed entirely: `.cl-main`, `.cl-canvas-col`,
+`.cl-panels`, `.cl-toolbar`, the `@media (min-width: 700px)` docked-layout
+block — none of that structure is needed once panels float instead of
+sharing space. New `src/ui/FloatingPanel.tsx` supplies every panel's
+title bar, close button, and Escape-to-close behavior (ported from
+Trace's own `Panel` component) — deliberately does NOT port Trace's
+drag-to-reposition, since a fixed right-edge anchor already fixes the
+actual complaint without the extra state a draggable position needs.
+`DrawingCanvas.tsx` gained `activePanel: PanelId | null` (closed by
+default, toggled by rail buttons) for Layers/Brush/Color; Undo/Redo/Clear
+deliberately stayed as always-visible top-rail buttons, not behind a
+panel, so no existing test needed to change how it reaches them.
+`LayersPanel.tsx` lost its own redundant header (now supplied by
+`FloatingPanel`) with every per-row aria-label and DOM structure
+otherwise untouched. Two new icons (`LayersIcon`, `CloseIcon`) added to
+`icons.tsx` following its existing pattern.
+
+Verified against the full 7-script Playwright smoke suite (not just the
+five engine-adjacent ones), plus `tsc`, `lint`, all 131 unit tests, and
+`npm run build` — all clean. Six of the seven scripts
+(renderer/persistence/drawing/bucket/undo/wet-stroke) passed completely
+unchanged, since they drive brush/mode/color through
+`window.__clumsyloopTool`/engine JS calls rather than clicking UI chips,
+and Undo/Redo/Clear kept their exact pre-existing accessible names. Only
+`layers-smoke.mjs` needed a change: since the Layers panel is now closed
+by default, its first interaction ("Add layer") timed out until a single
+line — `await page.getByRole('button', { name: 'Layers' }).click()` —
+was added right after the engine-ready wait to open the panel once at the
+start of the script. Zero engine or rendering changes; this task touched
+only `ui/`.
+
+Not done in this task, still open: the canvas format-picker feature
+itself (preset-based, referenced against Trace's own `SIZE_PRESETS`/
+`NewProjectControls` pattern but no code written), and the broader
+onion-skinning/keyframe-rig/lasso-selection/adjustable-FPS backlog named
+in the direction-correction entry below — none scoped into tasks yet.
+
 ### 2026-09-11 — Direction correction: Clumsyloop is not a TikTok-only app
 
 Important enough to log on its own, separate from any single task. The
