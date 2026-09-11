@@ -14,3 +14,10 @@ ios/App/App/public/
 xcuserdata/
 
 .DS_Store
+
+# Firebase emulator suite (task 3.2) — local run artifacts, not state
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.firebase/
+

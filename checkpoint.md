@@ -1,5 +1,63 @@
 # Checkpoint — Progress log
 
+### 2026-09-11 — Task 3.2: Firestore schema and security rules
+
+Last of the three things the owner asked for in one go (layers panel,
+wet-stroke staging, starting Firebase) — this is Firebase, and
+specifically the schema/rules half of phase 3, task 3.2, not task 3.1.
+
+3.1 (a real Firebase Console project + Sign in with Apple) genuinely
+can't happen from this environment: it needs an actual account action in
+the Firebase Console and a physical device to test Sign in with Apple on
+(same category of limitation phase 1's camera tasks are already stuck
+on). But 3.2's actual content — the Firestore collections and their
+security rules — doesn't need a live project at all: the Firestore
+emulator runs entirely standalone against a "demo-*" project ID
+(`.firebaserc` uses `demo-clumsyloop`), which Firebase's own tooling
+treats as emulator-only and never tries to reach real GCP for. That's
+the same kind of build-ahead exception this project already used
+repeatedly in phase 2 (2.5/2.6/2.7 built ahead of 2.3's device-blocked
+capture UI), just applied across phases 1/3 this time instead of within
+phase 2.
+
+`firestore.rules` covers exactly the three collections task 3.2's own
+title names — `users`, `projects`, `entitlements` — and nothing from
+phases 4/5 (the public feed's `clips`, moderation's `reports`): those
+aren't itemized tasks yet, and writing rules for a collection with no
+defined write path would be guessing at a design, not scoping actual
+work.
+
+- `users/{userId}`: publicly readable (the future feed needs to show a
+  clip's owner without every viewer needing their own special access),
+  writable only by that user, to their own document.
+- `projects/{projectId}`: read/update/delete gated on the document's
+  *existing* `ownerId` (`resource.data`), create gated on the *incoming*
+  one (`request.resource.data`) — `resource` doesn't exist yet at create
+  time, so conflating the two checks is a real, common Firestore rules
+  mistake worth naming even though it was avoided here.
+- `entitlements/{userId}`: read your own, write none — not even the
+  owner. CLAUDE.md is explicit that only a Cloud Function's Admin SDK
+  write (which bypasses these rules entirely) is ever trusted; task 3.4
+  is what will actually perform that write, later.
+
+Added `firebase-tools`, `@firebase/rules-unit-testing`, and `firebase`
+itself as devDependencies (the last one explicitly, not left to hoist in
+as a transitive dependency of the testing package, since the test script
+imports its modular Firestore functions directly), plus `firebase.json`
+and `.firebaserc` for the emulator config.
+
+Verified with a new `scripts/firestore-rules-test.mjs` — 16 checks run
+against the actual local Firestore emulator (`firebase emulators:exec
+--only firestore 'npm run test:rules'`), not a rules simulator or a
+read of the `.rules` file's syntax: public read of a user profile,
+self-write allowed, cross-user write denied, unauthenticated write
+denied; project create allowed with yourself as owner and denied with a
+spoofed `ownerId`, read/update/delete allowed for the owner and denied
+for anyone else; entitlement read allowed for the owner and denied for
+anyone else, write denied for everyone including the owner. All 16 pass.
+This task touches no application code — `tsc`, `lint`, `build`, and all
+131 unit tests are unaffected and still clean.
+
 ### 2026-09-11 — Task 2.10 (new): wet-stroke staging surface
 
 Third of the three things the owner asked for in one go (layers panel,

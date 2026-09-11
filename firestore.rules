@@ -1,0 +1,46 @@
+// Firestore security rules (task 3.2). Scoped to exactly what CLAUDE.md's
+// Backend section and task 3.2 itself call for at this stage: users,
+// projects, and entitlements. The clips/reports collections described in
+// phases 4 and 5 (the public feed, moderation) aren't itemized as their
+// own tasks yet — adding rules for them here would be scope creep ahead
+// of a task that doesn't exist, so they're deliberately left out.
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // App-facing profile info (display name, avatar) — separate from the
+    // Firebase Auth record itself. Publicly readable: the feed (phase 4)
+    // needs to show a clip's owner without every viewer having their own
+    // read of someone else's private data. Only the owning user can
+    // write their own document, and only that document.
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // A user's local stop-motion projects, synced to the cloud (the paid
+    // "cloud save" feature — see RUMBO.md's Business model section).
+    // Ownership is fixed at creation and never transferable: read/update/
+    // delete all check the EXISTING document's ownerId (`resource.data`),
+    // while create has to check the INCOMING one (`request.resource.data`)
+    // since `resource` doesn't exist yet.
+    match /projects/{projectId} {
+      allow read, update, delete: if request.auth != null && request.auth.uid == resource.data.ownerId;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.ownerId;
+    }
+
+    // Subscription entitlement (task 3.4/3.5). CLAUDE.md is explicit:
+    // "Subscription entitlement is never trusted from the client — a
+    // Cloud Function validates the receipt... and only then writes the
+    // state to Firestore." Cloud Functions run with Admin SDK privileges,
+    // which bypass these rules entirely — so the client-facing rule here
+    // is allowed to be, and must be, this simple: read your own
+    // entitlement to gate features locally, write none of it, ever,
+    // your own document included.
+    match /entitlements/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+  }
+}
