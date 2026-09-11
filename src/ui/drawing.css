@@ -1,11 +1,24 @@
 /*
- * Visual pass for the drawing screen only (task 2.11) — no engine or
- * behavior changes, purely the app-shell chrome around it. Up to this
- * task, every button in DrawingCanvas/LayersPanel was unstyled default
- * HTML: work went into the rendering/brush/undo/layers engine, not the
- * screen around it (see checkpoint.md's earlier entries). Dark, canvas-
- * app themed — #121214/#17171a match gl/renderer.ts's own WebGL clear
- * color so the page doesn't clash with the canvas it surrounds.
+ * Visual + layout pass for the drawing screen (tasks 2.11-2.12) — no
+ * engine or behavior changes, purely the app-shell chrome around it. Up
+ * to task 2.11, every button here was unstyled default HTML: work went
+ * into the rendering/brush/undo/layers engine, not the screen around it
+ * (see checkpoint.md's earlier entries). Dark, canvas-app themed —
+ * #121214/#17171a match gl/renderer.ts's own WebGL clear color so the
+ * page doesn't clash with the canvas it surrounds.
+ *
+ * Layout structure (task 2.12, in response to "the canvas scrolls out of
+ * view while picking a color" — a real gap 2.11 didn't cover, unlike any
+ * actual drawing app): `.cl-app` is a fixed-height flex column that never
+ * scrolls itself; `.cl-canvas-col` holds the canvas + toolbar and never
+ * shrinks below what the canvas needs; `.cl-panels` is the ONLY thing
+ * that scrolls, capped to a fraction of the viewport on narrow screens so
+ * the canvas always stays fully visible no matter how far you scroll
+ * inside Layers/Tool/Brush/Color. At >= 700px (tablet/desktop), `.cl-main`
+ * switches from a column to a row: the canvas gets the majority of a much
+ * wider stage instead of a phone-width column centered in empty space,
+ * and `.cl-panels` becomes a sidebar with its own independent scroll —
+ * the canvas is never affected by scrolling the panel either way.
  *
  * Plain CSS, not Tailwind or a component library: this project has no
  * such dependency yet and one screen doesn't justify adding one. Every
@@ -28,15 +41,24 @@
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  padding: 16px;
+  box-sizing: border-box;
+  height: 100vh;
+  height: 100dvh; /* accounts for mobile browser chrome collapsing/expanding */
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  max-width: 480px;
-  margin: 0 auto;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.cl-app *,
+.cl-app *::before,
+.cl-app *::after {
+  box-sizing: border-box;
 }
 
 .cl-title {
+  flex: none;
   margin: 0;
   font-size: 15px;
   font-weight: 600;
@@ -44,8 +66,35 @@
   color: var(--text-dim);
 }
 
-.cl-canvas-wrap {
+/* Canvas (left/top) and panels (right/bottom) side by side or stacked. */
+.cl-main {
+  flex: 1;
+  min-height: 0; /* lets children scroll internally instead of overflowing the page */
   display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.cl-canvas-col {
+  /* flex:1 (not flex:none) so this column's size comes top-down from
+     `.cl-main`'s definite height, not bottom-up from its own content —
+     the canvas's rendered size must stay stable regardless of sibling
+     text changing width/height (e.g. "Undo" becoming "Undo (Stroke)"
+     once there's something to undo), or every cached pointer-to-canvas
+     coordinate computed before that point goes stale. */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cl-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
   justify-content: center;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -54,24 +103,70 @@
 }
 
 .cl-canvas {
+  /* The canvas's intrinsic bitmap is a fixed 360x640 (DOC_WIDTH/HEIGHT) —
+     without an explicit display size, a replaced element like <canvas>
+     never grows past its intrinsic pixels, so on a roomy iPad/desktop
+     `.cl-canvas-wrap` it would otherwise sit tiny in a sea of empty
+     space. object-fit:contain scales it to fill whatever room
+     `.cl-canvas-wrap` actually has, up or down, preserving aspect ratio
+     — the standard way any real drawing app fills its canvas area
+     regardless of the document's own pixel resolution. */
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
   border-radius: 8px;
-  max-width: 100%;
-  height: auto;
   touch-action: none;
   cursor: crosshair;
   display: block;
 }
 
 .cl-status {
+  flex: none;
   margin: 0;
   font-size: 12px;
   color: var(--text-dim);
   text-align: center;
 }
 
+/* The only scrolling region on narrow screens — capped so the canvas
+   above it never gets pushed out of view, no matter how much content
+   Layers/Tool/Brush/Color hold. */
+.cl-panels {
+  flex: none;
+  max-height: 42vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px; /* room for the scrollbar so it doesn't sit on content */
+}
+
+@media (min-width: 700px) {
+  .cl-app {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  .cl-main {
+    flex-direction: row;
+  }
+
+  .cl-canvas-col {
+    flex: 2;
+    height: 100%;
+  }
+
+  .cl-panels {
+    flex: 1;
+    max-width: 340px;
+    max-height: none; /* the sidebar fills the column and scrolls on its own */
+  }
+}
+
 /* -- Toolbar: Undo/Redo/Clear as a compact icon row -- */
 
 .cl-toolbar {
+  flex: none;
   display: flex;
   gap: 8px;
   justify-content: center;

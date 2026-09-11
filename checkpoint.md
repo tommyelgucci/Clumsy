@@ -1,5 +1,110 @@
 # Checkpoint — Progress log
 
+### 2026-09-11 — Direction correction: Clumsyloop is not a TikTok-only app
+
+Important enough to log on its own, separate from any single task. The
+owner corrected a fundamental misreading that had been sitting in
+`CLAUDE.md`/`RUMBO.md` since before this session and that this session
+kept building on top of without questioning it: Clumsyloop was described
+as a short-form, TikTok/Reels-only, vertical-video app with drawing as a
+feature bolted onto stop-motion. That was never what the owner wanted —
+an earlier session introduced it, and it shaped real decisions downstream
+(the document's default 1080x1920 canvas size, at least one feature
+explicitly rejected as "a mismatch with the product's identity," a
+build-order argument that treated the camera plugin as an existential
+risk rather than just a real one).
+
+What the owner actually wants, in their own terms: an easier version of
+Trace to animate with — for TikTok, for YouTube cartoons, for easier
+stop-motion, "etc." — a genuine animation app, positioned as "an improved
+Procreate Dreams." Pushed further with a concrete competitive bar: not
+just Procreate Dreams, but ToonSquid, Clip Studio Paint, Callipeg, and
+RoughAnimator — the actual set of iPad/mobile 2D animation tools, each
+strong in a different way (rigging and lasso selection, professional
+brush/layer engine, onion skinning, audio/lip-sync and adjustable FPS,
+respectively). And confirmed directly, when asked, that camera capture is
+"a feature more, not the axis" — not the reason the app exists, one
+input source among several on the same timeline.
+
+Corrected `CLAUDE.md` ("What Clumsyloop is") and `RUMBO.md` ("The
+differentiator," "The technical risk that goes first," known debts) and
+`tasks.json`'s `ordering_rule` to reflect this — each edit marked inline
+as a correction rather than silently rewritten, so the reasoning that led
+here (and that it was wrong) stays visible, not erased. Concretely
+reopened: the audio-timeline rejection (2026-09-10) is retracted, not
+just softened — RoughAnimator's own standout feature is exactly that.
+Newly named as real, unbuilt gaps: onion skinning, keyframe/rig-based
+animation, lasso/shape selection, adjustable per-frame FPS — none
+itemized as tasks yet, each needing its own scoping pass.
+
+The one concrete code decision made alongside this: `core/document.ts`'s
+`newDocument()` default (`1080x1920`) is a direct casualty of the wrong
+assumption and is now known-wrong. The owner's call on the fix: a format
+picker at project creation (vertical 9:16 / horizontal 16:9 / square
+1:1), matching how Procreate/ToonSquid/Clip Studio Paint all handle
+canvas size — not a single fixed default, and not free-form custom
+sizing either. Not built yet; `DrawingCanvas.tsx`'s `DOC_WIDTH`/
+`DOC_HEIGHT` test constants and task 2.12's responsive canvas layout
+(below) were both built and verified against 9:16 only so far.
+
+What did NOT change: the iOS-only-for-launch distribution decision
+(App Store, StoreKit, Capacitor native app) is a separate business
+question from what the app IS, and stays as RUMBO.md already had it —
+the web build's own responsive layout (task 2.12) is a development
+convenience, not evidence of a desktop shipping target. Firebase/
+StoreKit/moderation reasoning, the brush/palette porting rationale, and
+the `core`/`gl`/`state`/`ui` architecture are all unaffected — none of
+them were downstream of the wrong assumption.
+
+### 2026-09-11 — Task 2.12 (new): responsive layout — canvas stays fixed and visible
+
+Owner tested 2.11's visual pass and found two real, structural problems,
+not just taste: scrolling down to pick a color scrolled the canvas
+itself out of view (no real drawing app works that way), and the layout
+was hard-capped at 480px wide, wasting almost the whole screen on iPad
+or desktop instead of adapting to it.
+
+Restructured the layout so `.cl-panels` (Layers/Tool/Brush/Color) is the
+ONLY thing that ever scrolls — capped at 42vh on narrow screens — while
+`.cl-canvas-col` (canvas + status + toolbar) is sized top-down from a
+fixed-height `.cl-app` (`100dvh`, never scrolls itself), not bottom-up by
+its own content. At >=700px, `.cl-main` switches from a column to a row:
+the canvas gets most of a much wider stage and the panel becomes an
+independently-scrolling sidebar, instead of a phone-width column centered
+in dead space. The canvas itself gained `object-fit: contain`, since a
+fixed 360x640 intrinsic bitmap never grows past its own pixel size
+without an explicit display size — without this it would sit tiny inside
+a big `.cl-canvas-wrap` on any screen larger than its native resolution.
+
+Two real bugs surfaced while actually testing this, not just reasoning
+about the CSS:
+
+1. `.cl-canvas-col` was first written as `flex: none` (content-sized)
+   instead of `flex: 1` (sized from the parent's definite height) — so
+   the canvas's rendered size could shift mid-test when sibling text
+   changed width (e.g. "Undo" becoming "Undo (Stroke)" the moment there
+   was something to undo), silently invalidating any pointer coordinate
+   a test had already cached. `undo-smoke.mjs`'s second and third stroke
+   checks failed exactly this way — the first stroke (before any label
+   changed) passed, later ones didn't.
+2. `object-fit: contain` means the canvas's CSS box and what's actually
+   rendered inside it can legitimately have different aspect ratios
+   (letterboxing) depending on available space. `DrawingCanvas.tsx`'s
+   `toSample()` needed a real fix to recover the true letterboxed content
+   rect (mirroring the same math `object-fit: contain` itself uses)
+   instead of a naive linear scale across the whole element box — and
+   every Playwright smoke script's own `toScreen()` helper needed the
+   identical fix, since each one independently computes where to click
+   and has to agree with the app's own transform. Fixed in all five
+   scripts that had it (bucket/drawing/layers/undo/wet-stroke-smoke),
+   not just the one that happened to fail first.
+
+Verified with real screenshots at phone (390x844), iPad (834x1194), and
+desktop (1440x900) widths, plus one explicitly scrolling the panel to
+confirm the canvas stays put — not just by reading the CSS and assuming
+it worked. All 7 Playwright smoke tests, 131 unit tests, `tsc`, `lint`,
+and `build` all clean.
+
 ### 2026-09-11 — Task 2.11 (new): visual pass on the drawing screen
 
 Owner tested the web preview from earlier today on a phone and compared

@@ -138,10 +138,25 @@ export function DrawingCanvas() {
   const toSample = (e: { clientX: number; clientY: number; pressure: number; pointerType: string; tiltX?: number; tiltY?: number; timeStamp: number }): InputSample => {
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
+    // The CSS box (`rect`) and the document's own pixels (`canvas.width`/
+    // `canvas.height`) don't necessarily share an aspect ratio since the
+    // layout pass (task 2.12) made the canvas `object-fit: contain` —
+    // letting it fill a `.cl-canvas-wrap` of any shape on tablet/desktop
+    // instead of sitting at its native 360x640 size in a sea of empty
+    // space. `contain` can letterbox: the rendered content is centered
+    // and scaled by whichever axis is more constraining, not stretched
+    // to fill `rect` on both axes. A naive rect.width/rect.height scale
+    // (correct only for the old max-width:100%;height:auto sizing, which
+    // could never letterbox) would misplace every stroke on any screen
+    // where the two aspect ratios differ — this recovers the actual
+    // letterboxed content rect first.
+    const scale = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+    const contentW = canvas.width * scale;
+    const contentH = canvas.height * scale;
+    const offsetX = rect.left + (rect.width - contentW) / 2;
+    const offsetY = rect.top + (rect.height - contentH) / 2;
+    const x = (e.clientX - offsetX) / scale;
+    const y = (e.clientY - offsetY) / scale;
 
     // A mouse (or a pen not touching yet) reports pressure 0/0.5; without
     // this floor, pressure-driven size/opacity dynamics would draw
@@ -198,105 +213,114 @@ export function DrawingCanvas() {
     <div className="cl-app">
       <h2 className="cl-title">Clumsyloop — Drawing</h2>
 
-      <div className="cl-canvas-wrap">
-        <canvas
-          ref={canvasRef}
-          id="drawing-canvas"
-          className="cl-canvas"
-          width={DOC_WIDTH}
-          height={DOC_HEIGHT}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={endStroke}
-          onPointerCancel={endStroke}
-        />
-      </div>
-      <p className="cl-status">{ready ? 'Ready.' : 'Starting…'}</p>
-
-      <div className="cl-toolbar">
-        <button className="cl-iconbtn cl-iconbtn--danger" onClick={handleClear}>
-          <TrashIcon />
-          Clear
-        </button>
-        <button className="cl-iconbtn" onClick={() => engineRef.current?.undo()} disabled={!canUndo} title="Ctrl/Cmd+Z">
-          <UndoIcon />
-          Undo{canUndo ? ` (${history!.undoLabel})` : ''}
-        </button>
-        <button className="cl-iconbtn" onClick={() => engineRef.current?.redo()} disabled={!canRedo} title="Shift+Ctrl/Cmd+Z">
-          <RedoIcon />
-          Redo{canRedo ? ` (${history!.redoLabel})` : ''}
-        </button>
-      </div>
-
-      {ready && engineRef.current && <LayersPanel engine={engineRef.current} />}
-
-      <div className="cl-section">
-        <h3 className="cl-section-title">Tool</h3>
-        <div className="cl-segmented">
-          <button onClick={() => setMode('draw')} aria-pressed={mode === 'draw'}>
-            <PencilIcon size={14} />
-            Draw
-          </button>
-          <button onClick={() => setMode('bucket')} aria-pressed={mode === 'bucket'}>
-            <BucketIcon size={14} />
-            Bucket
-          </button>
+      <div className="cl-main">
+        {/* The canvas column never scrolls and never shrinks below what
+            the canvas needs — see drawing.css's file header. Only
+            `.cl-panels` below scrolls, so picking a color or brush can
+            never push the canvas out of view. */}
+        <div className="cl-canvas-col">
+          <div className="cl-canvas-wrap">
+            <canvas
+              ref={canvasRef}
+              id="drawing-canvas"
+              className="cl-canvas"
+              width={DOC_WIDTH}
+              height={DOC_HEIGHT}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={endStroke}
+              onPointerCancel={endStroke}
+            />
+          </div>
+          <p className="cl-status">{ready ? 'Ready.' : 'Starting…'}</p>
+          <div className="cl-toolbar">
+            <button className="cl-iconbtn cl-iconbtn--danger" onClick={handleClear}>
+              <TrashIcon />
+              Clear
+            </button>
+            <button className="cl-iconbtn" onClick={() => engineRef.current?.undo()} disabled={!canUndo} title="Ctrl/Cmd+Z">
+              <UndoIcon />
+              Undo{canUndo ? ` (${history!.undoLabel})` : ''}
+            </button>
+            <button className="cl-iconbtn" onClick={() => engineRef.current?.redo()} disabled={!canRedo} title="Shift+Ctrl/Cmd+Z">
+              <RedoIcon />
+              Redo{canRedo ? ` (${history!.redoLabel})` : ''}
+            </button>
+          </div>
         </div>
-        {mode === 'bucket' && (
-          <>
-            <label className="cl-slider-row">
-              Tolerance {tolerance.toFixed(2)}
-              <input type="range" min={0} max={1} step={0.01} value={tolerance} onChange={(e) => setTolerance(Number(e.target.value))} />
-            </label>
-            <label className="cl-slider-row">
-              Expand {expand}px
-              <input type="range" min={0} max={8} step={1} value={expand} onChange={(e) => setExpand(Number(e.target.value))} />
-            </label>
-            <label className="cl-slider-row">
-              Gap closure {gapClose}px
-              <input type="range" min={0} max={8} step={1} value={gapClose} onChange={(e) => setGapClose(Number(e.target.value))} />
-            </label>
-          </>
-        )}
-      </div>
 
-      <div className="cl-section">
-        <h3 className="cl-section-title">Brush</h3>
-        {BRUSH_CATEGORIES.map((category) => (
-          <div key={category} className="cl-chip-group">
-            <span className="cl-chip-group-label">{BRUSH_CATEGORY_LABELS[category]}</span>
-            <div className="cl-chip-row">
-              {DEFAULT_BRUSHES.filter((b) => b.category === category).map((brush) => (
-                <button key={brush.id} className="cl-chip" onClick={() => setActiveBrush(brush.id)} aria-pressed={brush.id === activeBrushId}>
-                  {brush.name}
-                </button>
+        <div className="cl-panels">
+          {ready && engineRef.current && <LayersPanel engine={engineRef.current} />}
+
+          <div className="cl-section">
+            <h3 className="cl-section-title">Tool</h3>
+            <div className="cl-segmented">
+              <button onClick={() => setMode('draw')} aria-pressed={mode === 'draw'}>
+                <PencilIcon size={14} />
+                Draw
+              </button>
+              <button onClick={() => setMode('bucket')} aria-pressed={mode === 'bucket'}>
+                <BucketIcon size={14} />
+                Bucket
+              </button>
+            </div>
+            {mode === 'bucket' && (
+              <>
+                <label className="cl-slider-row">
+                  Tolerance {tolerance.toFixed(2)}
+                  <input type="range" min={0} max={1} step={0.01} value={tolerance} onChange={(e) => setTolerance(Number(e.target.value))} />
+                </label>
+                <label className="cl-slider-row">
+                  Expand {expand}px
+                  <input type="range" min={0} max={8} step={1} value={expand} onChange={(e) => setExpand(Number(e.target.value))} />
+                </label>
+                <label className="cl-slider-row">
+                  Gap closure {gapClose}px
+                  <input type="range" min={0} max={8} step={1} value={gapClose} onChange={(e) => setGapClose(Number(e.target.value))} />
+                </label>
+              </>
+            )}
+          </div>
+
+          <div className="cl-section">
+            <h3 className="cl-section-title">Brush</h3>
+            {BRUSH_CATEGORIES.map((category) => (
+              <div key={category} className="cl-chip-group">
+                <span className="cl-chip-group-label">{BRUSH_CATEGORY_LABELS[category]}</span>
+                <div className="cl-chip-row">
+                  {DEFAULT_BRUSHES.filter((b) => b.category === category).map((brush) => (
+                    <button key={brush.id} className="cl-chip" onClick={() => setActiveBrush(brush.id)} aria-pressed={brush.id === activeBrushId}>
+                      {brush.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="cl-section">
+            <h3 className="cl-section-title">Color</h3>
+            <select className="cl-palette-select" value={paletteIndex} onChange={(e) => setPaletteIndex(Number(e.target.value))}>
+              {paletteGroups.map((group, i) => (
+                <option key={group.name} value={i}>
+                  {group.name}
+                </option>
+              ))}
+            </select>
+            <div className="cl-swatch-row">
+              {paletteGroups[paletteIndex]?.colors.map((color, i) => (
+                <button
+                  key={i}
+                  className={`cl-swatch${color === activeColor ? ' cl-swatch--selected' : ''}`}
+                  onClick={() => setActiveColor(color)}
+                  aria-label={rgbToHex(color)}
+                  style={{ background: rgbToHex(color) }}
+                />
               ))}
             </div>
+            <input className="cl-color-input" type="color" value={rgbToHex(activeColor)} onChange={(e) => setActiveColor(hexToRgb(e.target.value))} />
           </div>
-        ))}
-      </div>
-
-      <div className="cl-section">
-        <h3 className="cl-section-title">Color</h3>
-        <select className="cl-palette-select" value={paletteIndex} onChange={(e) => setPaletteIndex(Number(e.target.value))}>
-          {paletteGroups.map((group, i) => (
-            <option key={group.name} value={i}>
-              {group.name}
-            </option>
-          ))}
-        </select>
-        <div className="cl-swatch-row">
-          {paletteGroups[paletteIndex]?.colors.map((color, i) => (
-            <button
-              key={i}
-              className={`cl-swatch${color === activeColor ? ' cl-swatch--selected' : ''}`}
-              onClick={() => setActiveColor(color)}
-              aria-label={rgbToHex(color)}
-              style={{ background: rgbToHex(color) }}
-            />
-          ))}
         </div>
-        <input className="cl-color-input" type="color" value={rgbToHex(activeColor)} onChange={(e) => setActiveColor(hexToRgb(e.target.value))} />
       </div>
     </div>
   );

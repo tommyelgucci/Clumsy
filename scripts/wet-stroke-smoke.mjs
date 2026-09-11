@@ -30,9 +30,19 @@ await page.waitForFunction(() => Boolean(window.__clumsyloopEngine), undefined, 
 
 const canvasBox = await page.locator('#drawing-canvas').boundingBox();
 const docSize = await page.evaluate(() => ({ w: window.__clumsyloopEngine.doc.width, h: window.__clumsyloopEngine.doc.height }));
+// The canvas is `object-fit: contain` (task 2.12's responsive layout), so
+// its element box and its actually-rendered content don't necessarily
+// share an aspect ratio on every viewport — the layout can letterbox it
+// on a short/wide one. This recovers the real content rect, mirroring
+// DrawingCanvas.tsx's own toSample() inverse transform; a naive
+// canvasBox.width/height scale only ever worked by coincidence before
+// the canvas could actually letterbox.
+const scale = Math.min(canvasBox.width / docSize.w, canvasBox.height / docSize.h);
+const contentOffsetX = canvasBox.x + (canvasBox.width - docSize.w * scale) / 2;
+const contentOffsetY = canvasBox.y + (canvasBox.height - docSize.h * scale) / 2;
 const toScreen = (docX, docY) => ({
-  x: canvasBox.x + (docX / docSize.w) * canvasBox.width,
-  y: canvasBox.y + (docY / docSize.h) * canvasBox.height,
+  x: contentOffsetX + docX * scale,
+  y: contentOffsetY + docY * scale,
 });
 
 // renderDocumentFrame's wetOverlay is what the canvas's own live preview
