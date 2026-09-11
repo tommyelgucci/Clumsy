@@ -5,6 +5,7 @@ import { clamp, hexToRgb, rgbToHex } from '../core/math';
 import type { InputSample, RGB } from '../core/types';
 import { Engine } from '../gl/engine';
 import { Renderer } from '../gl/renderer';
+import { LayersPanel } from './LayersPanel';
 import { usePalettes } from '../state/palettes';
 import { useTool } from '../state/tool';
 
@@ -26,10 +27,11 @@ function tiltToSpherical(tiltX: number, tiltY: number) {
 /**
  * The real drawing surface — the first non-harness consumer of
  * `brush.ts`, `palettes.ts`, and the renderer's compositing pipeline.
- * Single fixed "Ink" layer, single frame: the capture UI's timeline
- * (task 2.3) and its camera layer are still blocked on device
- * verification (see CLAUDE.md) — this only needs the drawing half,
- * which was always independent of the camera.
+ * Starts with a single "Ink" layer but the layers panel (task 2.9) lets
+ * the user add/remove/reorder more, all `kind: 'draw'` — a camera layer's
+ * cels only ever come from the capture UI's shutter (task 2.3), still
+ * blocked on device verification (see CLAUDE.md). Single frame regardless
+ * of layer count: the timeline itself is also task 2.3's territory.
  */
 export function DrawingCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -205,6 +207,8 @@ export function DrawingCanvas() {
         onPointerCancel={endStroke}
       />
       <p>{ready ? 'Ready.' : 'Starting…'}</p>
+
+      {ready && engineRef.current && <LayersPanel engine={engineRef.current} />}
 
       <div>
         <button onClick={handleClear}>Clear</button>

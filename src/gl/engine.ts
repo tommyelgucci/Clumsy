@@ -4,18 +4,23 @@
  * `checkpoint.md` flagged brush.ts as ported groundwork for, back when
  * it landed with no consumer yet.
  *
- * Deliberately minimal, not a port of Trace's `core/engine.ts`: no
- * revision/`touch()`/subscribe pub-sub (CLAUDE.md's documented pattern)
- * yet — that exists in Trace because many independent UI pieces (layers
- * panel, undo button, timeline) all need to react to document mutations
- * outside React's own state flow. This engine has exactly one consumer
- * so far, the canvas itself, and it updates the canvas imperatively via
- * `renderAndPresent()` right after every mutation — there's no second
- * listener yet to justify the pub-sub machinery. `history` (below) gets
- * its own `subscribe()` from `core/history.ts` directly, since an
- * undo/redo button genuinely does need to react independently of the
- * canvas's own imperative redraw — that's the one exception, not a
- * reversal of the no-pub-sub call.
+ * Deliberately minimal, not a port of Trace's `core/engine.ts` — but as
+ * of the layers panel (task 2.9) it does carry CLAUDE.md's documented
+ * `touch()`/revision/`subscribe()` pattern, added at exactly the point
+ * that pattern's own justification (a second independent UI consumer
+ * that needs to react to document mutations outside React's own state
+ * flow) actually showed up: the canvas keeps redrawing itself
+ * imperatively via `renderAndPresent()`, but the layers panel needs to
+ * know when a layer is added/removed/reordered/renamed/toggled, which
+ * doesn't otherwise touch the canvas. `touch()` lives inside
+ * `renderAndPresent()` itself rather than being called separately by
+ * every mutator — every mutation already ends in a call to
+ * `renderAndPresent()`, so piggybacking the revision bump there covers
+ * strokes, fills, Clear, undo/redo, and every layer operation for free,
+ * with no risk of a mutator forgetting to call `touch()` on its own.
+ * `history` (below) still gets its own separate `subscribe()` from
+ * `core/history.ts` — undo/redo state is its own concept, not a document
+ * revision, and the Undo/Redo buttons only care about it specifically.
  *
  * Also minimal on purpose: single frame (frame 0), no timeline yet — the
  * capture UI (task 2.3) is what actually needs multiple frames, and
@@ -36,7 +41,7 @@
 import { History, type Command } from '../core/history';
 import { StrokeBuilder, type BrushPreset } from '../core/brush';
 import { generateBrushTexturePixels, isBuiltinTextureId } from '../core/brushTexture';
-import { celAt, uid, type Cel, type ClumsyloopDocument, type Layer } from '../core/document';
+import { celAt, newLayer, uid, type Cel, type ClumsyloopDocument, type Layer } from '../core/document';
 import { extractRect } from '../core/flood';
 import { mat3FromTRS } from '../core/math';
 import { clampRect, emptyRect, expandRect, rectIsEmpty, type InputSample, type RGB, type Stamp } from '../core/types';
@@ -48,6 +53,8 @@ export class Engine {
   readonly doc: ClumsyloopDocument;
   readonly history = new History();
   private _activeLayerId: string;
+  private _revision = 0;
+  private revisionListeners = new Set<() => void>();
 
   private builder: StrokeBuilder | null = null;
   private strokeBrush: BrushPreset | null = null;
@@ -69,14 +76,95 @@ export class Engine {
     return this._activeLayerId;
   }
 
-  /** Switches which layer strokes/fills write into. No layers panel uses
-   *  this yet (`DrawingCanvas` only ever has one fixed layer) — added so
-   *  bucket fill's reference-layer behavior (painting one layer using
-   *  another's boundaries) has a real way to be exercised at all, by a
-   *  future layers panel or a test. */
+  get revision(): number {
+    return this._revision;
+  }
+
+  /** Notified after every mutation (see the file header) — a layers panel
+   *  or any future UI piece that isn't the canvas itself uses this to
+   *  know when to re-render. */
+  subscribe(fn: () => void): () => void {
+    this.revisionListeners.add(fn);
+    return () => this.revisionListeners.delete(fn);
+  }
+
+  /** Switches which layer strokes/fills write into. Used by the layers
+   *  panel (task 2.9) and, before that, bucket fill's reference-layer
+   *  behavior (painting one layer using another's boundaries as its
+   *  boundary) to exercise a second layer at all. */
   setActiveLayer(id: string) {
     if (!this.doc.layers.some((l) => l.id === id)) throw new Error(`Engine: no layer with id ${id}`);
     this._activeLayerId = id;
+    this.renderAndPresent();
+  }
+
+  /** Adds a new draw layer on top of the stack and makes it active. Only
+   *  ever `'draw'` — a camera layer's cels come from the (still
+   *  device-blocked, see CLAUDE.md) capture UI, not from a button a user
+   *  taps in a drawing panel, so there's nothing meaningful to add here
+   *  yet. No undo: unlike a stroke or fill, a bare new layer has no
+   *  pixels to lose, so there's nothing undoing it would meaningfully
+   *  restore beyond what re-clicking "Delete" already does. */
+  addLayer(name?: string): Layer {
+    const layer = newLayer(name ?? `Layer ${this.doc.layers.length + 1}`, true, 'draw');
+    this.doc.layers.push(layer);
+    this._activeLayerId = layer.id;
+    this.renderAndPresent();
+    return layer;
+  }
+
+  /** Removes a layer and releases its cels' GPU surfaces — safe to do
+   *  immediately since (unlike stroke/fill undo) layer removal isn't
+   *  undoable, so nothing else can still need that texture afterward.
+   *  Refuses to remove the last layer: the document always needs
+   *  somewhere to paint. Returns whether it actually removed anything,
+   *  so the UI can tell a real deletion from a no-op. */
+  removeLayer(id: string): boolean {
+    if (this.doc.layers.length <= 1) return false;
+    const index = this.doc.layers.findIndex((l) => l.id === id);
+    if (index < 0) return false;
+    const [layer] = this.doc.layers.splice(index, 1);
+    for (const cel of layer.cels.values()) this.renderer.release(cel.surface);
+    if (this._activeLayerId === id) {
+      this._activeLayerId = this.doc.layers[Math.max(0, index - 1)].id;
+    }
+    this.renderAndPresent();
+    return true;
+  }
+
+  /** Swaps a layer with its neighbor toward the top (`'up'`) or bottom
+   *  (`'down'`) of the stack — `doc.layers` is bottom-to-top, so "up" in
+   *  the panel's stacking order means a higher array index. No-op at
+   *  either end of the stack. */
+  moveLayer(id: string, direction: 'up' | 'down') {
+    const layers = this.doc.layers;
+    const i = layers.findIndex((l) => l.id === id);
+    if (i < 0) return;
+    const j = direction === 'up' ? i + 1 : i - 1;
+    if (j < 0 || j >= layers.length) return;
+    [layers[i], layers[j]] = [layers[j], layers[i]];
+    this.renderAndPresent();
+  }
+
+  setLayerVisible(id: string, visible: boolean) {
+    const layer = this.doc.layers.find((l) => l.id === id);
+    if (!layer) return;
+    layer.visible = visible;
+    this.renderAndPresent();
+  }
+
+  setLayerLocked(id: string, locked: boolean) {
+    const layer = this.doc.layers.find((l) => l.id === id);
+    if (!layer) return;
+    layer.locked = locked;
+    this.renderAndPresent();
+  }
+
+  renameLayer(id: string, name: string) {
+    const layer = this.doc.layers.find((l) => l.id === id);
+    if (!layer || !name.trim()) return;
+    layer.name = name.trim();
+    this.renderAndPresent();
   }
 
   private get activeLayer(): Layer {
@@ -108,11 +196,18 @@ export class Engine {
     return this.renderer.getBrushTexture(id, () => ({ pixels: generateBrushTexturePixels(id), hasColor: false }));
   }
 
+  /** No-op (builder stays null, so `pushStroke`/`endStroke` are no-ops
+   *  too) on a locked, hidden, or non-`draw` layer — same guard
+   *  `floodFill` already has, now also enforced for strokes. Locking a
+   *  layer via the layers panel (task 2.9) needs this to actually mean
+   *  something: before this guard, `locked` only stopped bucket fills. */
   beginStroke(brush: BrushPreset, color: RGB, sample: InputSample) {
+    const layer = this.activeLayer;
+    if (layer.locked || !layer.visible || layer.kind !== 'draw') return;
     this.strokeBrush = brush;
     this.strokeColor = color;
     this.builder = new StrokeBuilder(brush);
-    const { cel, created } = this.ensureCel(this.activeLayer);
+    const { cel, created } = this.ensureCel(layer);
     this.strokeCel = cel;
     this.strokeCelCreated = created;
     // The one full-cel read this whole approach costs (see file header)
@@ -322,5 +417,7 @@ export class Engine {
     const canvas = this.renderer.canvas;
     const viewMatrix = mat3FromTRS(0, 0, 0, canvas.width, canvas.height);
     this.renderer.present(result, viewMatrix, this.doc.paper, this.doc.paperAlpha, 16);
+    this._revision++;
+    for (const fn of this.revisionListeners) fn();
   }
 }

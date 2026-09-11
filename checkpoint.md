@@ -1,5 +1,78 @@
 # Checkpoint — Progress log
 
+### 2026-09-11 — Task 2.9 (new): layers panel
+
+Owner asked for three things in one go: a layers panel, starting Firebase
+(phase 3), and addressing the drawing engine's own known debts (wet-stroke
+staging, pigment-mix blending). Taking them in that order — this entry is
+the first. The multi-layer document model has existed since task 2.1, and
+bucket fill's reference-layer behavior (task 2.7) already proved the
+engine handles more than one layer correctly, but there was never an
+actual UI to add a second layer, switch which one is active, or do
+anything else layer-related — `setActiveLayer` only ever got called by a
+test harness. This closes that gap.
+
+`Engine` gained `addLayer`, `removeLayer`, `moveLayer`, `setLayerVisible`,
+`setLayerLocked`, and `renameLayer`. `addLayer` is `'draw'`-only on
+purpose — a camera layer's cels only ever come from the capture UI's
+shutter (task 2.3, still blocked on device verification per CLAUDE.md),
+so there's nothing a panel button could meaningfully add for that kind
+yet. `removeLayer` calls `renderer.release()` on each of the removed
+layer's cel surfaces immediately: unlike a stroke or fill (task 2.8),
+layer removal has no undo, so nothing can still need that GPU texture
+afterward. Deliberately no undo at all for any structural layer operation
+(add/remove/reorder/rename/visibility/lock) — a bare layer has no pixels
+for undo to restore, and wiring `Command`-based undo onto array splices
+that hold GPU-backed `Layer` objects would reopen exactly the disposal-
+timing question `removeLayer`'s immediate `release()` call was added to
+sidestep in the first place. Worth naming plainly: this doesn't fix a
+real gap that already exists elsewhere — a stroke or fill's undo-tracked
+`created` cel keeps its `Surface` reachable for a possible `redo()`, but
+nothing ever calls `release()` on it once `History`'s own `MAX_STEPS`/
+`MAX_BYTES` trimming drops that command for good. That's a pre-existing
+leak from tasks 2.6-2.8, not introduced here, and still open — noted so
+it isn't lost, not something this task's scope covers.
+
+This is also the point `gl/engine.ts`'s own header comment has been
+deferring since task 2.6: CLAUDE.md documents a `touch()` → bump revision
+→ `subscribe()` pattern for exactly the situation where "a second UI
+consumer needs to react to document mutations outside React's own state
+flow" — and the layers panel is the first thing that's actually true for.
+Added it now, but `touch()` lives inside `renderAndPresent()` itself
+(called at the end of every mutation already, strokes and fills and Clear
+and undo/redo included) rather than being a separate call every mutator
+has to remember to make.
+
+Building the panel surfaced a real bug outside the panel's own code:
+`Engine.beginStroke` never checked `layer.locked` or `layer.visible` at
+all — only `floodFill` did (task 2.7). Locking a layer through the new
+panel would have silently done nothing to stop a stroke on it. Fixed by
+giving `beginStroke` the same guard `floodFill` already had, since it
+needed it on its own terms, not only to make the new Lock button work.
+
+New `src/ui/LayersPanel.tsx`: list of layers top-to-bottom (`doc.layers`
+itself is bottom-to-top, reversed only for display), each row showing
+Hide/Show, Lock/Unlock, a double-click-to-rename name field, Move
+Up/Down, and Delete (disabled once only one layer remains), with the
+active layer highlighted and selectable by clicking its row. Subscribes
+to the new `engine.subscribe()` via a plain `useEffect` — safe here,
+unlike `DrawingCanvas`'s own `history` subscription, because
+`LayersPanel` only ever mounts once `DrawingCanvas`'s `ready` flag is
+already true, so there's no first-mount race between the engine's
+creation and the subscription (the exact hazard task 2.8 worked around
+by subscribing inside the same effect instead).
+
+Verified with a new `scripts/layers-smoke.mjs` (Playwright): starting
+state; add-layer making the new layer active; clicking a row to switch
+the active layer; a stroke landing on whichever layer is active; rename;
+hide/show actually removing/restoring a layer from the composite (not
+just toggling a flag nothing reads); lock genuinely blocking a stroke;
+reorder changing composite stacking order; delete removing a layer and
+being refused once only one remains, checked both via the disabled
+button and by calling `removeLayer()` directly. All five prior Playwright
+smoke tests re-verified alongside this one with no regressions; 131 unit
+tests, `tsc`, `lint`, and `build` all clean.
+
 ### 2026-09-11 — Task 2.8 (new): undo/redo for strokes, bucket fills, and Clear
 
 Owner picked this over a layers panel or another pass at device
