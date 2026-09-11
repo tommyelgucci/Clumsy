@@ -16,6 +16,7 @@
     "test:undo-smoke": "node scripts/undo-smoke.mjs",
     "test:layers-smoke": "node scripts/layers-smoke.mjs",
     "test:wet-stroke-smoke": "node scripts/wet-stroke-smoke.mjs",
+    "test:timeline-smoke": "node scripts/timeline-smoke.mjs",
     "test:rules": "node scripts/firestore-rules-test.mjs",
     "cap:sync": "cap sync ios",
     "cap:open": "cap open ios"

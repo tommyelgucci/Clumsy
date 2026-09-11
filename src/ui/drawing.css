@@ -87,7 +87,9 @@
 .cl-status {
   position: absolute;
   left: 50%;
-  bottom: var(--rail-gap);
+  /* Sits above the timeline rail (task 2.14), which now occupies the
+     bottom-center spot this used to have to itself. */
+  bottom: calc(var(--rail-gap) + 52px);
   transform: translateX(-50%);
   z-index: 15;
   margin: 0;
@@ -133,11 +135,54 @@
   align-items: center;
 }
 
+/* -- Timeline (task 2.14): frame transport, bottom-center -- */
+
+.cl-rail--bottom {
+  left: 50%;
+  bottom: var(--rail-gap);
+  transform: translateX(-50%);
+  align-items: center;
+  max-width: calc(100vw - 2 * var(--rail-gap));
+  overflow-x: auto;
+}
+
+.cl-frame-counter {
+  flex: none;
+  padding: 0 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.cl-fps-input {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.cl-fps-input input {
+  width: 32px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 2px;
+  font-size: 12px;
+  text-align: center;
+}
+
 .cl-rail-divider {
   background: var(--border);
 }
 
-.cl-rail--top .cl-rail-divider {
+.cl-rail--top .cl-rail-divider,
+.cl-rail--bottom .cl-rail-divider {
   width: 1px;
   align-self: stretch;
   margin: 2px 4px;

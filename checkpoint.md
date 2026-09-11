@@ -1,5 +1,69 @@
 # Checkpoint — Progress log
 
+### 2026-09-11 — Task 2.14 (new): timeline — frame navigation, add/duplicate/delete frame, onion skin, fps
+
+Follow-up to the direction correction below: once Clumsyloop was reframed
+as a general-purpose animation app rather than a TikTok-only tool, the
+owner asked to advance everything that doesn't depend on hardware. The
+single biggest remaining camera-independent gap turned out to already be
+half-built: `core/document.ts`'s `Cel` model was already a sparse
+`Map<frame, Cel>` per layer (ported from Trace, complete with
+`celAt`/`celStartFrame`/`celHoldLength`), and `gl/renderer.ts`'s
+`renderDocumentFrame(doc, frame)` already composited at an arbitrary
+frame — neither needed a single line changed. `gl/engine.ts` was the only
+piece still hardcoded to frame 0 (task 2.6's own doc comment said as
+much: "single frame (frame 0), no timeline yet"), because nothing had
+ever exposed frame navigation through the UI.
+
+Generalized `Engine.ensureCel`/`beginStroke`/`clearActiveLayer`/
+`floodFill` from a hardcoded `0` to a `frame` parameter (captured once at
+the start of an action, not read live, so an action can't be retargeted
+mid-flight), and added `currentFrame` navigation (`setCurrentFrame`/
+`stepFrame`), `addCel(duplicate?)`/`deleteCel()` on the active layer, an
+onion-skin toggle, and an `fps` setter — `addCel`/`deleteCel` mirror
+Trace's own `core/engine.ts` semantics directly (read from the sibling
+clone, not guessed): duplicating copies the currently-held cel's pixels,
+adding grows `doc.frameCount` only if needed (reversibly), and deleting
+only removes a cel that starts exactly at the current frame, not
+whichever cel is currently held. Onion skin needed zero renderer changes:
+it renders the previous frame through the same `renderDocumentFrame` call
+already in use, with paper forced transparent on a shallow-cloned doc
+object, then `drawOver`s it under the current frame at a fixed 0.35
+opacity — the renderer's existing primitives already covered it.
+Deliberately narrower than Trace's own onion skin (one frame back only,
+fixed opacity, no tinted ghost) and narrower than Callipeg/RoughAnimator's
+full per-frame variable hold-duration FPS control (this is one global fps
+setting) — both real, intentional scope cuts, documented as such rather
+than silently claimed as the full feature.
+
+New `src/ui/Timeline.tsx` (prev/next frame, frame counter, new/duplicate/
+delete-frame, onion toggle, fps input) as an always-visible bottom-center
+rail, following `LayersPanel`'s established `engine.subscribe()` pattern.
+Deliberately not a filmstrip — no per-frame thumbnail rendering yet, a
+real future addition. `DrawingCanvas.tsx`'s initial document changed from
+a hardcoded single frame to 24, matching `newDocument`'s own stated
+default, so the timeline actually has room to be useful from the start.
+
+Verified via a new `scripts/timeline-smoke.mjs`: frame isolation (reading
+each frame's own composite directly, unaffected by onion either way),
+duplicate/delete/undo/redo across a sequence of frame actions, and onion
+skin confirmed by reading back the renderer's own `'onionAcc'` scratch
+surface directly rather than the presented canvas (the same live-WebGL-
+readback caveat CLAUDE.md already flags). Caught and fixed two real
+issues along the way: the same thin-brush sampling-window pitfall
+`undo-smoke.mjs` already documented for the default brush, and a genuine
+narrow-phone layout overflow in the new timeline rail (fps field cut off
+at 390px) — tightened, re-screenshotted, confirmed usable though still
+snug at the very narrowest widths. All 8 Playwright smoke tests, 131 unit
+tests, `tsc`, `lint`, and `build` all clean.
+
+Still open, deliberately out of scope for this task: a real filmstrip
+with per-frame thumbnails, per-frame adjustable hold duration (vs. this
+task's single global fps), a richer onion-skin panel (configurable
+before/after frame count, opacity, tinted ghost — Trace's own version),
+and the canvas format-picker feature named in the direction-correction
+entry below (still unbuilt).
+
 ### 2026-09-11 — Task 2.13 (new): layout rearchitecture — full-bleed canvas, floating rails and panels
 
 Follow-up to the direction correction below and to task 2.12's own known

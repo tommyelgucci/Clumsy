@@ -137,3 +137,40 @@ export function CloseIcon({ size = 16 }: IconProps) {
     </svg>
   );
 }
+
+export function StepBackIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>
+      <path d="M6 5v14" />
+      <path d="M18 6 8 12l10 6Z" />
+    </svg>
+  );
+}
+
+export function StepForwardIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>
+      <path d="M18 5v14" />
+      <path d="M6 6l10 6-10 6Z" />
+    </svg>
+  );
+}
+
+export function DuplicateFrameIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>
+      <rect x="4" y="7" width="12" height="13" rx="2" />
+      <path d="M8 7V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-1" />
+    </svg>
+  );
+}
+
+export function OnionIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>
+      <circle cx="12" cy="12" r="8" opacity="0.4" />
+      <circle cx="10" cy="12" r="8" opacity="0.7" />
+      <circle cx="12" cy="12" r="8" />
+    </svg>
+  );
+}

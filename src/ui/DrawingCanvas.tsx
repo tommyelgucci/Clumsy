@@ -9,6 +9,7 @@ import './drawing.css';
 import { FloatingPanel } from './FloatingPanel';
 import { BucketIcon, LayersIcon, PencilIcon, RedoIcon, TrashIcon, UndoIcon } from './icons';
 import { LayersPanel } from './LayersPanel';
+import { Timeline } from './Timeline';
 import { usePalettes } from '../state/palettes';
 import { useTool } from '../state/tool';
 
@@ -35,8 +36,10 @@ function tiltToSpherical(tiltX: number, tiltY: number) {
  * Starts with a single "Ink" layer but the layers panel (task 2.9) lets
  * the user add/remove/reorder more, all `kind: 'draw'` — a camera layer's
  * cels only ever come from the capture UI's shutter (task 2.3), still
- * blocked on device verification (see CLAUDE.md). Single frame regardless
- * of layer count: the timeline itself is also task 2.3's territory.
+ * blocked on device verification (see CLAUDE.md). Multi-frame since task
+ * 2.14: the `Timeline` rail lets the user navigate/add/duplicate/delete
+ * draw-only frames — the camera-independent half of what task 2.3
+ * originally bundled together (see that component's own doc comment).
  *
  * Layout (task 2.13): the canvas fills the whole screen; floating icon
  * rails (tools, undo/redo, panel toggles) and closeable overlay panels
@@ -98,7 +101,7 @@ export function DrawingCanvas() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const doc = newDocument(DOC_WIDTH, DOC_HEIGHT, 12, 1);
+    const doc = newDocument(DOC_WIDTH, DOC_HEIGHT, 12, 24);
     const ink = newLayer('Ink', true, 'draw');
     doc.layers.push(ink);
     let engine: Engine;
@@ -291,6 +294,8 @@ export function DrawingCanvas() {
           <LayersIcon />
         </button>
       </div>
+
+      {ready && engineRef.current && <Timeline engine={engineRef.current} />}
 
       {activePanel === 'layers' && ready && engineRef.current && (
         <FloatingPanel title="Layers" onClose={() => setActivePanel(null)}>
