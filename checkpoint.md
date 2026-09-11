@@ -1,5 +1,81 @@
 # Checkpoint — Progress log
 
+### 2026-09-11 — Task 2.10 (new): wet-stroke staging surface
+
+Third of the three things the owner asked for in one go (layers panel,
+starting Firebase, drawing-engine debt) — this is the engine debt, and
+specifically the wet-stroke staging surface half of it, not pigment-mix
+blending itself (see below for why that split).
+
+Since task 2.6, non-erase stamps have painted straight onto the
+permanent cel as they arrived — a documented, deliberate simplification,
+but a real one: it meant no pigment-mix blending for the one `brush.ts`
+preset that wants it (Watercolor), no "cancel this stroke" gesture, and
+undo (task 2.8) having to read back the whole cel at `beginStroke` because
+there was no untouched surface to read a precise dirty rect from later.
+This closes the structural half of that gap the way Trace itself does:
+stamps for a non-erase stroke now land on `renderer.scratch('wetStroke')`
+for the whole stroke, composited live on top of the active layer's own
+cel for the canvas preview, and only `drawOver`'d onto the permanent cel
+once, at `endStroke`.
+
+`Renderer.renderDocumentFrame` gained an optional `wetOverlay` param
+(`{layerId, surface}`), threaded into `rasterizeLayer`: when it names the
+layer currently being rasterized, that layer's cel — or a blank scratch
+surface, if the layer doesn't have a cel yet at all — gets the wet
+surface `drawOver`'d onto it before taking part in the rest of the
+composite. The "layer has no cel yet" case matters on its own: a brand
+new layer's very first stroke needs to preview live before `endStroke`
+ever creates a permanent cel for it, so `rasterizeLayer` checks for the
+overlay even when there's no cel to check against. Both existing
+`copy`/`drawOver` primitives were enough for this — no new shader needed.
+
+Erase deliberately does NOT go through the wet surface. Erasing uses
+`blendFunc(ZERO, ONE_MINUS_SRC_ALPHA)` to subtract from whatever's
+already there; routed through an initially-transparent wet surface, it
+would have nothing to subtract from, and merging that empty result back
+with a normal `drawOver` would silently cancel the whole gesture. Erase
+stamps still go straight onto the permanent cel, exactly as before this
+task, and keep the older whole-cel-snapshot-at-`beginStroke` undo
+approach, since there's still no untouched pre-stroke surface for the
+erase path to read from later.
+
+A real, welcome side effect of the split: a non-erase stroke's undo
+"before" snapshot can now be read at `endStroke`, right before the merge,
+instead of reading the whole cel up front the way task 2.8 had to — task
+2.8's own checkpoint entry named this exact limitation as a consequence
+of not having a wet layer yet, so it's worth confirming it's actually
+fixed now, for that half of the strokes at least.
+
+Whether merging N stamps' wet-surface result in one `drawOver` produces
+the same pixels as painting those N stamps directly onto the cel in
+sequence isn't just assumed — premultiplied-alpha "over" compositing is
+associative, so the two are mathematically identical, and every
+pre-existing Playwright smoke test's pixel values came back essentially
+unchanged after this change (not just their pass/fail status), which is
+the empirical confirmation of that math actually holding here.
+
+Pigment-mix blending itself (`BrushPreset.pigmentMix`, `gl/shaders.ts`'s
+own header comment already flagged `MIX_FS` as intentionally unbuilt)
+is still NOT implemented — this task deliberately only builds the
+staging surface a future `MIX_FS` merge pass would need, since inventing
+that shader's actual blend math without any reference implementation to
+port from (Trace's own shader source isn't available in this session)
+is a separate, riskier piece of work than the structural plumbing.
+Watercolor's `pigmentMix: 0.15` still has no visible effect, same as
+before — noted here so the scope split is explicit, not silently implied
+as "done."
+
+Verified with a new `scripts/wet-stroke-smoke.mjs` (Playwright): a
+brand-new layer with no cel previews a stroke live before pointer-up,
+and genuinely has no permanent cel mid-stroke (only the wet surface
+does); the stroke stays visible through the merge; the permanent cel
+gets created exactly at merge time; the eraser is confirmed to still
+touch the permanent cel mid-stroke, unaffected by any of this. All six
+prior Playwright smoke tests re-verified with no regressions and,
+notably, near-identical reported pixel values to their previous runs;
+131 unit tests, `tsc`, `lint`, and `build` all clean.
+
 ### 2026-09-11 — Task 2.9 (new): layers panel
 
 Owner asked for three things in one go: a layers panel, starting Firebase

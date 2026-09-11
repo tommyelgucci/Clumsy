@@ -15,6 +15,7 @@
     "test:bucket-smoke": "node scripts/bucket-smoke.mjs",
     "test:undo-smoke": "node scripts/undo-smoke.mjs",
     "test:layers-smoke": "node scripts/layers-smoke.mjs",
+    "test:wet-stroke-smoke": "node scripts/wet-stroke-smoke.mjs",
     "cap:sync": "cap sync ios",
     "cap:open": "cap open ios"
   },

@@ -168,3 +168,15 @@ is literally what the app produces.
   use case (a general 2D animation tool), not a short stop-motion clip
   for TikTok/Reels. Revisit only if the owner decides Clumsyloop's scope
   should grow to include it — not a default next step.
+- **Pigment-mix blending (`BrushPreset.pigmentMix`, only the Watercolor
+  preset sets it) is still not implemented**, even after task 2.10 added
+  the wet-stroke staging surface that a real implementation would merge
+  through. `gl/shaders.ts` deliberately left out `MIX_FS` back at task 2.2
+  for the same reason: without Trace's own shader source available in
+  this environment to port from, its actual blend math would have to be
+  invented from scratch rather than ported, which is a different, riskier
+  piece of work than the staging plumbing task 2.10 built. Today's stroke
+  merge is plain `drawOver` regardless of `pigmentMix`, so Watercolor
+  currently behaves like any other brush. Revisit once there's either a
+  reference implementation to port or the owner explicitly wants a
+  from-scratch design for it.

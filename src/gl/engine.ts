@@ -25,18 +25,34 @@
  * Also minimal on purpose: single frame (frame 0), no timeline yet — the
  * capture UI (task 2.3) is what actually needs multiple frames, and
  * that's still blocked on camera device verification (see CLAUDE.md).
- * No wet-stroke staging surface either (Trace merges a stroke onto its
- * cel only on pointer-up, mid-stroke pixels live on a scratch surface):
- * stamps go straight onto the permanent cel as they arrive. That means
- * no pigment-mix blending for the one `brush.ts` preset that wants it
- * ("Watercolor", `pigmentMix: 0.15`) and no "cancel this stroke" gesture
- * — both real, deferred simplifications, not oversights. It also means
- * undo (task added 2026-09-11) can't snapshot just the stroke's dirty
- * rect the way Trace does (that needs the pre-stroke pixels still
- * sitting untouched on a wet layer) — here the whole cel gets read back
- * once at `beginStroke`, before anything is drawn, and only the final
- * dirty rect (tracked via `expandRect` per stamp, same padding Trace
- * uses) is what actually gets kept in the `Command`.
+ *
+ * Non-erase strokes (task 2.10) now go through a wet-stroke staging
+ * surface, matching Trace: stamps land on a scratch surface
+ * (`renderer.scratch('wetStroke')`) for the whole stroke, composited live
+ * on top of the active layer's own cel for the canvas preview
+ * (`Renderer.renderDocumentFrame`'s `wetOverlay` param), and only
+ * `drawOver`'d onto the permanent cel for real at `endStroke`. Two real
+ * things this buys: undo can finally read the dirty rect's "before" state
+ * right before the merge — no need to snapshot the whole cel up front the
+ * way the erase path (below) still has to — and pigment-mix blending
+ * (`BrushPreset.pigmentMix`, the one `brush.ts` field this engine still
+ * doesn't act on — see "Watercolor") now has an actual seam to hook into
+ * at merge time, once it's built; it isn't yet, so today's merge is plain
+ * `drawOver` regardless of `pigmentMix`, same visual result as before this
+ * task for every brush that doesn't set it. A "cancel this stroke"
+ * gesture (discard the wet surface, touch nothing) is also now trivial to
+ * add but isn't exposed by any UI yet.
+ *
+ * Erase strokes deliberately do NOT go through the wet surface: erasing
+ * uses `blendFunc(ZERO, ONE_MINUS_SRC_ALPHA)` to punch a hole in whatever
+ * is already there, which only makes sense against the real permanent
+ * cel — erasing onto an initially-transparent wet surface would have
+ * nothing to erase, and merging that empty result with a normal
+ * `drawOver` would silently undo the whole erase. So erase keeps stamping
+ * straight onto the permanent cel, and keeps the older undo approach:
+ * the whole cel read back once at `beginStroke`, before anything is
+ * drawn, with only the final dirty rect (`expandRect` per stamp, same
+ * padding Trace uses) kept in the `Command`.
  */
 import { History, type Command } from '../core/history';
 import { StrokeBuilder, type BrushPreset } from '../core/brush';
@@ -46,7 +62,7 @@ import { extractRect } from '../core/flood';
 import { mat3FromTRS } from '../core/math';
 import { clampRect, emptyRect, expandRect, rectIsEmpty, type InputSample, type RGB, type Stamp } from '../core/types';
 import type { FloodFillResponse } from '../workers/floodFill.worker';
-import { Renderer } from './renderer';
+import { Renderer, type Surface } from './renderer';
 
 export class Engine {
   readonly renderer: Renderer;
@@ -59,7 +75,13 @@ export class Engine {
   private builder: StrokeBuilder | null = null;
   private strokeBrush: BrushPreset | null = null;
   private strokeColor: RGB = { r: 0, g: 0, b: 0 };
-  /** Undo bookkeeping for the stroke in progress — see `beginStroke`/`endStroke`. */
+  private strokeLayer: Layer | null = null;
+  /** Whether the stroke in progress goes through the wet staging surface
+   *  (see file header) — false only for erase, which still draws straight
+   *  onto the permanent cel and needs the older whole-cel undo fields
+   *  below. */
+  private strokeUsesWet = false;
+  /** Erase-path undo bookkeeping only — see `beginStroke`/`endStroke`. */
   private strokeCel: Cel | null = null;
   private strokeCelCreated = false;
   private strokeBefore: Uint8Array | null = null;
@@ -206,16 +228,28 @@ export class Engine {
     if (layer.locked || !layer.visible || layer.kind !== 'draw') return;
     this.strokeBrush = brush;
     this.strokeColor = color;
+    this.strokeLayer = layer;
+    this.strokeUsesWet = !brush.erase;
     this.builder = new StrokeBuilder(brush);
-    const { cel, created } = this.ensureCel(layer);
-    this.strokeCel = cel;
-    this.strokeCelCreated = created;
-    // The one full-cel read this whole approach costs (see file header)
-    // — taken now, before a single stamp lands, so it's the exact
-    // pre-stroke state regardless of how big the stroke's dirty rect
-    // ends up being.
-    this.strokeBefore = this.renderer.readRect(cel.surface, 0, 0, this.doc.width, this.doc.height);
     this.strokeRect = emptyRect();
+
+    if (this.strokeUsesWet) {
+      // Wet staging (see file header): the permanent cel isn't touched
+      // at all until endStroke merges into it, so it doesn't even need
+      // to exist yet — ensureCel happens lazily there instead.
+      this.renderer.clear(this.renderer.scratch('wetStroke'));
+      this.strokeCel = null;
+      this.strokeCelCreated = false;
+      this.strokeBefore = null;
+    } else {
+      // Erase can't use the wet surface (see file header) — stamps go
+      // straight onto the permanent cel, so undo still needs the whole
+      // pre-stroke cel read up front, before anything is drawn.
+      const { cel, created } = this.ensureCel(layer);
+      this.strokeCel = cel;
+      this.strokeCelCreated = created;
+      this.strokeBefore = this.renderer.readRect(cel.surface, 0, 0, this.doc.width, this.doc.height);
+    }
     this.paintStamps(this.builder.begin(sample));
   }
 
@@ -225,28 +259,63 @@ export class Engine {
   }
 
   endStroke() {
-    if (!this.builder || !this.strokeCel || !this.strokeBefore) {
-      this.builder = null;
-      return;
-    }
+    if (!this.builder) return;
     this.paintStamps(this.builder.end());
     this.builder = null;
     const label = this.strokeBrush?.erase ? 'Erase' : 'Stroke';
     this.strokeBrush = null;
 
+    const rect = clampRect(this.strokeRect, this.doc.width, this.doc.height);
+    this.strokeRect = emptyRect();
+
+    if (this.strokeUsesWet) {
+      const layer = this.strokeLayer;
+      this.strokeLayer = null;
+      // A tap that produced no stamps at all (shouldn't normally happen —
+      // StrokeBuilder.begin() always emits at least one) leaves the
+      // permanent cel untouched either way, since it was never created
+      // for this stroke in the first place — nothing to clean up.
+      if (!layer || rectIsEmpty(rect)) return;
+
+      const { cel, created } = this.ensureCel(layer);
+      const rectW = rect.x2 - rect.x;
+      const rectH = rect.y2 - rect.y;
+      // The precise dirty-rect "before" state, read right before the
+      // merge — possible now because the wet surface kept the permanent
+      // cel completely untouched up to this exact point (see file header;
+      // the erase path below still can't do this).
+      const before = this.renderer.readRect(cel.surface, rect.x, rect.y, rectW, rectH);
+      this.renderer.drawOver(cel.surface, this.renderer.scratch('wetStroke'));
+      const after = this.renderer.readRect(cel.surface, rect.x, rect.y, rectW, rectH);
+
+      // `push`, not `run`: the merge already happened, just above.
+      this.history.push({
+        label,
+        cost: before.byteLength + after.byteLength,
+        redo: () => {
+          if (created) layer.cels.set(0, cel);
+          this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, after);
+        },
+        undo: () => {
+          this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, before);
+          if (created) layer.cels.delete(0);
+        },
+      });
+      return;
+    }
+
+    // Erase path: unchanged from before task 2.10 — stamps already went
+    // straight onto the permanent cel throughout the stroke.
+    if (!this.strokeCel || !this.strokeBefore) return;
     const cel = this.strokeCel;
     const created = this.strokeCelCreated;
     const fullBefore = this.strokeBefore;
-    const layer = this.activeLayer;
+    const layer = this.strokeLayer ?? this.activeLayer;
     this.strokeCel = null;
     this.strokeBefore = null;
+    this.strokeLayer = null;
 
-    const rect = clampRect(this.strokeRect, this.doc.width, this.doc.height);
-    this.strokeRect = emptyRect();
     if (rectIsEmpty(rect)) {
-      // A tap that produced no stamps at all (shouldn't normally happen —
-      // StrokeBuilder.begin() always emits at least one — but a
-      // just-created cel shouldn't be left behind for nothing either way).
       if (created) layer.cels.delete(0);
       return;
     }
@@ -256,8 +325,6 @@ export class Engine {
     const before = extractRect(fullBefore, this.doc.width, rect);
     const after = this.renderer.readRect(cel.surface, rect.x, rect.y, rectW, rectH);
 
-    // `push`, not `run`: the stroke already happened live, stamp by
-    // stamp, while it was being drawn — this only records it.
     this.history.push({
       label,
       cost: before.byteLength + after.byteLength,
@@ -273,10 +340,21 @@ export class Engine {
   }
 
   private paintStamps(stamps: Stamp[]) {
-    if (stamps.length === 0 || !this.strokeBrush || !this.strokeCel) return;
+    if (stamps.length === 0 || !this.strokeBrush) return;
+    const target = this.strokeUsesWet ? this.renderer.scratch('wetStroke') : this.strokeCel?.surface;
+    if (!target) return;
     for (const s of stamps) expandRect(this.strokeRect, s.x, s.y, s.size * 0.75 + 2);
-    this.renderer.drawStamps(this.strokeCel.surface, stamps, this.strokeColor, this.brushTexture(this.strokeBrush), this.strokeBrush.erase);
+    this.renderer.drawStamps(target, stamps, this.strokeColor, this.brushTexture(this.strokeBrush), this.strokeBrush.erase);
     this.renderAndPresent();
+  }
+
+  /** The wet surface composited live on top of the active layer's cel,
+   *  while a non-erase stroke is in progress — see `renderAndPresent`
+   *  and `Renderer.renderDocumentFrame`'s `wetOverlay` param. `undefined`
+   *  the rest of the time, which renders exactly as before task 2.10. */
+  private activeStrokeOverlay(): { layerId: string; surface: Surface } | undefined {
+    if (!this.builder || !this.strokeUsesWet || !this.strokeLayer) return undefined;
+    return { layerId: this.strokeLayer.id, surface: this.renderer.scratch('wetStroke') };
   }
 
   /** Clears the active layer's cel, undoably. A no-op (no history entry)
@@ -413,7 +491,7 @@ export class Engine {
   }
 
   renderAndPresent() {
-    const result = this.renderer.renderDocumentFrame(this.doc, 0);
+    const result = this.renderer.renderDocumentFrame(this.doc, 0, this.activeStrokeOverlay());
     const canvas = this.renderer.canvas;
     const viewMatrix = mat3FromTRS(0, 0, 0, canvas.width, canvas.height);
     this.renderer.present(result, viewMatrix, this.doc.paper, this.doc.paperAlpha, 16);

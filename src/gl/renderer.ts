@@ -623,8 +623,16 @@ export class Renderer {
    * "just a Surface" regardless of `Layer.kind` (see `document.ts`'s note
    * on `Cel`). Clip groups (`buildClipGroups`) are resolved against their
    * base layer before the group as a whole reaches the accumulator, same
-   * order Trace's `engine.ts` uses, trimmed of the wet-stroke/onion-skin/
-   * active-layer caching this renderer doesn't have yet.
+   * order Trace's `engine.ts` uses, trimmed of the onion-skin/active-layer
+   * caching this renderer doesn't have yet.
+   *
+   * `wetOverlay`, when given, is composited on top of one specific
+   * layer's own cel (matched by `layerId`) before that layer takes part
+   * in the rest of the composite — see `Engine`'s wet-stroke staging
+   * surface (task 2.10): while a stroke is in progress, its stamps live
+   * on a scratch surface, not the permanent cel yet, so this is how the
+   * canvas shows a live preview of a stroke that hasn't actually been
+   * committed anywhere.
    *
    * The returned `Surface` is one of this renderer's own scratch buffers
    * (same convention as Trace's `compositeGroups`) — it's only valid
@@ -637,7 +645,7 @@ export class Renderer {
    * buffer once their clip-group counts give the ping-pong the same
    * parity — confirmed the hard way once, not a hypothetical caveat.
    */
-  renderDocumentFrame(doc: ClumsyloopDocument, frame: number): Surface {
+  renderDocumentFrame(doc: ClumsyloopDocument, frame: number, wetOverlay?: { layerId: string; surface: Surface }): Surface {
     this.setDocumentSize(doc.width, doc.height);
     const groups = buildClipGroups(doc.layers);
 
@@ -649,7 +657,7 @@ export class Renderer {
     for (const { base, clipped } of groups) {
       if (!base.visible) continue;
 
-      const baseSurface = this.rasterizeLayer(base, doc, frame);
+      const baseSurface = this.rasterizeLayer(base, doc, frame, wetOverlay);
       const visibleClipped = clipped.filter((l) => l.visible);
       if (!baseSurface && visibleClipped.length === 0) continue;
 
@@ -664,7 +672,7 @@ export class Renderer {
         if (baseSurface) this.copy(g, baseSurface, 1);
         else this.clear(g);
         for (const child of visibleClipped) {
-          const cs = this.rasterizeLayer(child, doc, frame);
+          const cs = this.rasterizeLayer(child, doc, frame, wetOverlay);
           if (!cs) continue;
           this.composite(g2, g, cs, {
             opacity: child.opacity * sampleChannel(child.transform.opacity, frame),
@@ -685,14 +693,32 @@ export class Renderer {
     return acc;
   }
 
-  /** This layer's cel at `frame`, positioned by its `TransformTrack` —
-   *  or `null` if it has no cel there. Returns the cel's own surface
-   *  untouched when the transform is the identity (the common case), to
-   *  avoid an extra copy per frame. */
-  private rasterizeLayer(layer: Layer, doc: ClumsyloopDocument, frame: number): Surface | null {
+  /** This layer's cel at `frame`, positioned by its `TransformTrack`, with
+   *  `wetOverlay` composited on top if it names this layer — or `null` if
+   *  there's neither a cel nor an overlay to show. Returns the cel's own
+   *  surface untouched when there's no overlay and the transform is the
+   *  identity (the common case), to avoid an extra copy per frame.
+   *
+   *  Checked even when the layer has no cel yet: a brand-new layer's very
+   *  first stroke has real content on the wet overlay before the merge at
+   *  `endStroke` ever creates a permanent cel for it (see `Engine`) — bailing
+   *  out early on `!cel` would hide that stroke's live preview entirely. */
+  private rasterizeLayer(layer: Layer, doc: ClumsyloopDocument, frame: number, wetOverlay?: { layerId: string; surface: Surface }): Surface | null {
     const cel = celAt(layer, frame);
-    if (!cel) return null;
-    const src = cel.surface;
+    const overlay = wetOverlay?.layerId === layer.id ? wetOverlay.surface : null;
+    if (!cel && !overlay) return null;
+
+    let src: Surface;
+    if (overlay) {
+      const preview = this.scratch('wetPreview');
+      if (cel) this.copy(preview, cel.surface, 1);
+      else this.clear(preview);
+      this.drawOver(preview, overlay, 1);
+      src = preview;
+    } else {
+      src = cel!.surface;
+    }
+
     if (transformIsIdentity(layer.transform, frame)) return src;
 
     const tx = sampleChannel(layer.transform.x, frame);
