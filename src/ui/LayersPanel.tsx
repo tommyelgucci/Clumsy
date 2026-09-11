@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Engine } from '../gl/engine';
+import { ChevronDownIcon, ChevronUpIcon, EyeIcon, EyeOffIcon, LockIcon, PlusIcon, TrashIcon, UnlockIcon } from './icons';
 
 /**
  * Layer list: add/delete/reorder/rename, visibility and lock toggles, and
@@ -9,6 +10,12 @@ import type { Engine } from '../gl/engine';
  * first-mount ordering hazard here: the engine already exists by the time
  * this component's first effect runs, so a plain `useEffect` subscription
  * to `engine.subscribe()` is safe.
+ *
+ * Visual pass (task 2.11): icon buttons instead of text buttons, but
+ * every button keeps the same `aria-label` it had before — the icons are
+ * decorative (`aria-hidden`), so accessible names, and anything that
+ * looks them up (Playwright's scripts/layers-smoke.mjs included), are
+ * unaffected by this restyle.
  */
 export function LayersPanel({ engine }: { engine: Engine }) {
   const [, forceUpdate] = useState(0);
@@ -28,48 +35,48 @@ export function LayersPanel({ engine }: { engine: Engine }) {
   const layersTopToBottom = [...engine.doc.layers].reverse();
 
   return (
-    <div>
-      <h3>Layers</h3>
-      <button onClick={() => engine.addLayer()}>Add layer</button>
-      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+    <div className="cl-section">
+      <div className="cl-section-header">
+        <h3 className="cl-section-title">Layers</h3>
+        <button className="cl-add-layer" onClick={() => engine.addLayer()}>
+          <PlusIcon size={14} />
+          Add layer
+        </button>
+      </div>
+      <ul className="cl-layer-list">
         {layersTopToBottom.map((layer) => {
           const isActive = layer.id === engine.activeLayerId;
           return (
             <li
               key={layer.id}
+              className={`cl-layer-row${isActive ? ' cl-layer-row--active' : ''}`}
               onClick={() => {
                 if (!isActive) engine.setActiveLayer(layer.id);
               }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 4,
-                padding: '2px 4px',
-                background: isActive ? '#345' : 'transparent',
-                color: isActive ? '#fff' : undefined,
-                cursor: 'pointer',
-              }}
             >
               <button
+                className={`cl-layer-btn${layer.visible ? '' : ' cl-layer-btn--active'}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   engine.setLayerVisible(layer.id, !layer.visible);
                 }}
                 aria-label={`${layer.visible ? 'Hide' : 'Show'} ${layer.name}`}
               >
-                {layer.visible ? 'Hide' : 'Show'}
+                {layer.visible ? <EyeIcon /> : <EyeOffIcon />}
               </button>
               <button
+                className={`cl-layer-btn${layer.locked ? ' cl-layer-btn--active' : ''}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   engine.setLayerLocked(layer.id, !layer.locked);
                 }}
                 aria-label={`${layer.locked ? 'Unlock' : 'Lock'} ${layer.name}`}
               >
-                {layer.locked ? 'Unlock' : 'Lock'}
+                {layer.locked ? <LockIcon /> : <UnlockIcon />}
               </button>
               {renamingId === layer.id ? (
                 <input
+                  className="cl-layer-input"
                   autoFocus
                   value={renameValue}
                   onChange={(e) => setRenameValue(e.target.value)}
@@ -79,40 +86,42 @@ export function LayersPanel({ engine }: { engine: Engine }) {
                     if (e.key === 'Enter') commitRename();
                     if (e.key === 'Escape') setRenamingId(null);
                   }}
-                  style={{ flex: 1, minWidth: 0 }}
                 />
               ) : (
                 <span
+                  className="cl-layer-name"
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     setRenamingId(layer.id);
                     setRenameValue(layer.name);
                   }}
-                  style={{ flex: 1, fontWeight: isActive ? 'bold' : 'normal' }}
                 >
                   {layer.name}
-                  {layer.kind === 'camera' ? ' (camera)' : ''}
+                  {layer.kind === 'camera' ? <span className="cl-layer-kind"> (camera)</span> : ''}
                 </span>
               )}
               <button
+                className="cl-layer-btn"
                 onClick={(e) => {
                   e.stopPropagation();
                   engine.moveLayer(layer.id, 'up');
                 }}
                 aria-label={`Move ${layer.name} up`}
               >
-                Up
+                <ChevronUpIcon />
               </button>
               <button
+                className="cl-layer-btn"
                 onClick={(e) => {
                   e.stopPropagation();
                   engine.moveLayer(layer.id, 'down');
                 }}
                 aria-label={`Move ${layer.name} down`}
               >
-                Down
+                <ChevronDownIcon />
               </button>
               <button
+                className="cl-layer-btn cl-layer-btn--danger"
                 onClick={(e) => {
                   e.stopPropagation();
                   engine.removeLayer(layer.id);
@@ -120,7 +129,7 @@ export function LayersPanel({ engine }: { engine: Engine }) {
                 disabled={engine.doc.layers.length <= 1}
                 aria-label={`Delete ${layer.name}`}
               >
-                Delete
+                <TrashIcon />
               </button>
             </li>
           );

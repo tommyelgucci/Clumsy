@@ -5,6 +5,8 @@ import { clamp, hexToRgb, rgbToHex } from '../core/math';
 import type { InputSample, RGB } from '../core/types';
 import { Engine } from '../gl/engine';
 import { Renderer } from '../gl/renderer';
+import './drawing.css';
+import { BucketIcon, PencilIcon, RedoIcon, TrashIcon, UndoIcon } from './icons';
 import { LayersPanel } from './LayersPanel';
 import { usePalettes } from '../state/palettes';
 import { useTool } from '../state/tool';
@@ -193,72 +195,79 @@ export function DrawingCanvas() {
   const canRedo = history?.canRedo ?? false;
 
   return (
-    <div>
-      <h2>Drawing</h2>
-      <canvas
-        ref={canvasRef}
-        id="drawing-canvas"
-        width={DOC_WIDTH}
-        height={DOC_HEIGHT}
-        style={{ border: '1px solid #444', maxWidth: '100%', touchAction: 'none', cursor: 'crosshair' }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={endStroke}
-        onPointerCancel={endStroke}
-      />
-      <p>{ready ? 'Ready.' : 'Starting…'}</p>
+    <div className="cl-app">
+      <h2 className="cl-title">Clumsyloop — Drawing</h2>
 
-      {ready && engineRef.current && <LayersPanel engine={engineRef.current} />}
+      <div className="cl-canvas-wrap">
+        <canvas
+          ref={canvasRef}
+          id="drawing-canvas"
+          className="cl-canvas"
+          width={DOC_WIDTH}
+          height={DOC_HEIGHT}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={endStroke}
+          onPointerCancel={endStroke}
+        />
+      </div>
+      <p className="cl-status">{ready ? 'Ready.' : 'Starting…'}</p>
 
-      <div>
-        <button onClick={handleClear}>Clear</button>
-        <button onClick={() => engineRef.current?.undo()} disabled={!canUndo} title="Ctrl/Cmd+Z">
+      <div className="cl-toolbar">
+        <button className="cl-iconbtn cl-iconbtn--danger" onClick={handleClear}>
+          <TrashIcon />
+          Clear
+        </button>
+        <button className="cl-iconbtn" onClick={() => engineRef.current?.undo()} disabled={!canUndo} title="Ctrl/Cmd+Z">
+          <UndoIcon />
           Undo{canUndo ? ` (${history!.undoLabel})` : ''}
         </button>
-        <button onClick={() => engineRef.current?.redo()} disabled={!canRedo} title="Shift+Ctrl/Cmd+Z">
+        <button className="cl-iconbtn" onClick={() => engineRef.current?.redo()} disabled={!canRedo} title="Shift+Ctrl/Cmd+Z">
+          <RedoIcon />
           Redo{canRedo ? ` (${history!.redoLabel})` : ''}
         </button>
       </div>
 
-      <div>
-        <h3>Tool</h3>
-        <button onClick={() => setMode('draw')} aria-pressed={mode === 'draw'} style={{ fontWeight: mode === 'draw' ? 'bold' : 'normal' }}>
-          Draw
-        </button>
-        <button onClick={() => setMode('bucket')} aria-pressed={mode === 'bucket'} style={{ fontWeight: mode === 'bucket' ? 'bold' : 'normal' }}>
-          Bucket
-        </button>
+      {ready && engineRef.current && <LayersPanel engine={engineRef.current} />}
+
+      <div className="cl-section">
+        <h3 className="cl-section-title">Tool</h3>
+        <div className="cl-segmented">
+          <button onClick={() => setMode('draw')} aria-pressed={mode === 'draw'}>
+            <PencilIcon size={14} />
+            Draw
+          </button>
+          <button onClick={() => setMode('bucket')} aria-pressed={mode === 'bucket'}>
+            <BucketIcon size={14} />
+            Bucket
+          </button>
+        </div>
         {mode === 'bucket' && (
-          <div>
-            <label>
+          <>
+            <label className="cl-slider-row">
               Tolerance {tolerance.toFixed(2)}
               <input type="range" min={0} max={1} step={0.01} value={tolerance} onChange={(e) => setTolerance(Number(e.target.value))} />
             </label>
-            <label>
+            <label className="cl-slider-row">
               Expand {expand}px
               <input type="range" min={0} max={8} step={1} value={expand} onChange={(e) => setExpand(Number(e.target.value))} />
             </label>
-            <label>
+            <label className="cl-slider-row">
               Gap closure {gapClose}px
               <input type="range" min={0} max={8} step={1} value={gapClose} onChange={(e) => setGapClose(Number(e.target.value))} />
             </label>
-          </div>
+          </>
         )}
       </div>
 
-      <div>
-        <h3>Brush</h3>
+      <div className="cl-section">
+        <h3 className="cl-section-title">Brush</h3>
         {BRUSH_CATEGORIES.map((category) => (
-          <div key={category}>
-            <strong>{BRUSH_CATEGORY_LABELS[category]}</strong>
-            <div>
+          <div key={category} className="cl-chip-group">
+            <span className="cl-chip-group-label">{BRUSH_CATEGORY_LABELS[category]}</span>
+            <div className="cl-chip-row">
               {DEFAULT_BRUSHES.filter((b) => b.category === category).map((brush) => (
-                <button
-                  key={brush.id}
-                  onClick={() => setActiveBrush(brush.id)}
-                  aria-pressed={brush.id === activeBrushId}
-                  style={{ fontWeight: brush.id === activeBrushId ? 'bold' : 'normal' }}
-                >
+                <button key={brush.id} className="cl-chip" onClick={() => setActiveBrush(brush.id)} aria-pressed={brush.id === activeBrushId}>
                   {brush.name}
                 </button>
               ))}
@@ -267,32 +276,27 @@ export function DrawingCanvas() {
         ))}
       </div>
 
-      <div>
-        <h3>Color</h3>
-        <select value={paletteIndex} onChange={(e) => setPaletteIndex(Number(e.target.value))}>
+      <div className="cl-section">
+        <h3 className="cl-section-title">Color</h3>
+        <select className="cl-palette-select" value={paletteIndex} onChange={(e) => setPaletteIndex(Number(e.target.value))}>
           {paletteGroups.map((group, i) => (
             <option key={group.name} value={i}>
               {group.name}
             </option>
           ))}
         </select>
-        <div>
+        <div className="cl-swatch-row">
           {paletteGroups[paletteIndex]?.colors.map((color, i) => (
             <button
               key={i}
+              className={`cl-swatch${color === activeColor ? ' cl-swatch--selected' : ''}`}
               onClick={() => setActiveColor(color)}
               aria-label={rgbToHex(color)}
-              style={{
-                width: 24,
-                height: 24,
-                background: rgbToHex(color),
-                border: color === activeColor ? '2px solid #fff' : '1px solid #888',
-                outline: color === activeColor ? '1px solid #000' : 'none',
-              }}
+              style={{ background: rgbToHex(color) }}
             />
           ))}
         </div>
-        <input type="color" value={rgbToHex(activeColor)} onChange={(e) => setActiveColor(hexToRgb(e.target.value))} />
+        <input className="cl-color-input" type="color" value={rgbToHex(activeColor)} onChange={(e) => setActiveColor(hexToRgb(e.target.value))} />
       </div>
     </div>
   );

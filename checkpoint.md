@@ -1,5 +1,75 @@
 # Checkpoint — Progress log
 
+### 2026-09-11 — Task 2.11 (new): visual pass on the drawing screen
+
+Owner tested the web preview from earlier today on a phone and compared
+it unfavorably to a TikTok ad — a screen recording of Procreate's own
+Animation Assist feature (identifiable by its timeline UI and Transform/
+Warp tools), being demoed by a course creator selling an "animate like
+this" tutorial. Watched the clip (via the `watch` skill, after installing
+`ffmpeg`, which this environment didn't have yet) to confirm exactly what
+was being compared against before responding, rather than guessing from
+the description alone.
+
+That specific comparison wasn't apples to apples, and said so plainly:
+Procreate is a paid, professional iPad app with 10+ years of development
+behind it; Clumsyloop is weeks into a prototype where the actual
+differentiator (drawing over stop-motion capture) doesn't even have its
+camera plugin verified on a device yet. But the underlying complaint was
+fair — every control in `DrawingCanvas`/`LayersPanel` has been default
+unstyled HTML since task 2.6, on purpose, because all the effort so far
+went into the engine, not the chrome around it. That's a genuinely bad
+way to evaluate a drawing feel, independent of what ad prompted the
+feedback.
+
+Pure visual restyle, deliberately zero engine changes:
+
+- New `src/ui/drawing.css` — plain CSS, not Tailwind (no such dependency
+  exists in this project yet, and one screen doesn't justify adding one).
+  Dark palette keyed off `#17171a`/`#121214`, matching `gl/renderer.ts`'s
+  own WebGL clear color so the page around the canvas doesn't clash with
+  it. Card-style sections (Layers/Tool/Brush/Color) all share the same
+  shape; a segmented Draw/Bucket control; horizontally scrollable brush
+  chip rows with a fade-out mask hinting there's more; circular color
+  swatches with a selection ring.
+- New `src/ui/icons.tsx` — hand-authored inline SVG icons (undo/redo/
+  trash/eye/lock/plus/chevrons/bucket/pencil), no icon-library dependency
+  added, no emoji (this project's own UI-copy conventions rule those out,
+  and it applies to icons too). Every icon is `aria-hidden` so it never
+  contributes to a button's accessible name.
+
+Before touching any markup, enumerated every `getByRole`/`aria-label`
+lookup across all 7 Playwright smoke scripts to know exactly which
+accessible names and DOM shapes were load-bearing: the canvas's
+`id="drawing-canvas"`, a button named exactly `"Clear"`, button names
+matching `/^Undo/` and `/^Redo/`, `LayersPanel`'s `"{verb} {layer.name}"`
+aria-labels (Hide/Show/Lock/Unlock/Move up/Move down/Delete), an exact
+`"Add layer"` match, the `<li><span>` layer-row shape, and `<li input>`
+for renaming. Restyled around every one of those rather than discovering
+breakage after the fact — icon+label buttons kept their original text,
+aria-label-driven buttons kept the exact same aria-label.
+
+Also collapsed the camera-plugin/renderer/persistence dev harnesses in
+`ui/App.tsx` behind a closed-by-default `<details>` — sitting in raw
+unstyled HTML directly below the drawing screen, they were arguably a
+bigger contributor to the "looks like an old program" impression than
+the drawing screen's own controls. Left them functionally untouched,
+just no longer competing for attention by default.
+
+Found and fixed a real, unrelated gap while wiring the CSS import: this
+project never had a `src/vite-env.d.ts`, so `tsc -b` had no ambient
+types for a `.css` side-effect import at all (`import './drawing.css'`
+failed with `TS2882`). Added the standard Vite scaffold file — it was
+simply always missing, since nothing had ever imported a non-TS asset
+here before.
+
+Verified with a real screenshot (Playwright, both Draw and Bucket modes)
+before calling it done, not just by reading the CSS — confirmed the card
+sections, the segmented control's active state, the swatch selection
+ring, and the chip rows' scroll-fade all render as intended. All 7
+Playwright smoke tests re-verified with no regressions and no selector
+changes needed; 131 unit tests, `tsc`, `lint`, and `build` all clean.
+
 ### 2026-09-11 — Task 3.2: Firestore schema and security rules
 
 Last of the three things the owner asked for in one go (layers panel,

@@ -43,28 +43,35 @@ export function App() {
   return (
     <div>
       <DrawingCanvas />
-      <hr />
 
-      {/* Manual test harness for tasks 1.2/1.3 (the camera plugin skeleton
-          and its exposure/focus lock) — not the real capture UI, which
-          lands in phase 2 once 1.3's flicker check passes on a device. */}
-      <button onClick={handleLock} disabled={locked}>
-        Lock exposure/focus
-      </button>
-      <button onClick={handleUnlock} disabled={!locked}>
-        Unlock
-      </button>
-      <button onClick={handleCapture}>Capture frame ({frames.length})</button>
-      {error && <p>{error}</p>}
-      <div>
-        {frames.map((base64, i) => (
-          <img key={i} src={`data:image/jpeg;base64,${base64}`} alt={`Frame ${i + 1}`} />
-        ))}
-      </div>
-      <hr />
-      <RendererHarness />
-      <hr />
-      <PersistenceHarness />
+      {/* Manual test harnesses for tasks 1.2/1.3 (camera plugin skeleton),
+          2.2 (renderer), and 2.5 (persistence) — collapsed by default so
+          they don't visually compete with the actual drawing screen above
+          (task 2.11). Deliberately left unstyled: these are dev tools, not
+          product surface — see CLAUDE.md on why the camera plugin can't be
+          verified from here at all (no device). */}
+      <details style={{ margin: '16px auto', maxWidth: 480, color: '#9a9aa2', fontFamily: '-apple-system, sans-serif', fontSize: 13 }}>
+        <summary style={{ cursor: 'pointer' }}>Developer tools (camera plugin, renderer, persistence harnesses)</summary>
+        <div style={{ marginTop: 12 }}>
+          <button onClick={handleLock} disabled={locked}>
+            Lock exposure/focus
+          </button>
+          <button onClick={handleUnlock} disabled={!locked}>
+            Unlock
+          </button>
+          <button onClick={handleCapture}>Capture frame ({frames.length})</button>
+          {error && <p>{error}</p>}
+          <div>
+            {frames.map((base64, i) => (
+              <img key={i} src={`data:image/jpeg;base64,${base64}`} alt={`Frame ${i + 1}`} />
+            ))}
+          </div>
+          <hr />
+          <RendererHarness />
+          <hr />
+          <PersistenceHarness />
+        </div>
+      </details>
     </div>
   );
 }
