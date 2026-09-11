@@ -1,5 +1,94 @@
 # Checkpoint — Progress log
 
+### 2026-09-11 — Task 2.8 (new): undo/redo for strokes, bucket fills, and Clear
+
+Owner picked this over a layers panel or another pass at device
+verification as the next task. Wired the already-ported `core/history.ts`
+(task 2.1 — `History`/`Command`, sitting unused since it landed) into
+`gl/engine.ts`, which up to now had no undo at all (a deliberate
+simplification flagged in both 2.6 and 2.7's checkpoint entries).
+
+Three actions needed three different shapes of `Command`, because this
+engine (task 2.6) draws strokes straight onto the permanent cel instead
+of onto a wet staging surface the way Trace does:
+
+- **Stroke**: `beginStroke` reads the whole active cel back once, before
+  any stamp lands, and keeps it in memory only for the duration of the
+  stroke. Each stamp expands a running dirty rect (`expandRect`, same
+  padding Trace uses). At `endStroke`, only that dirty sub-rect's
+  before/after pixels get kept in the `Command` (via `extractRect`) — the
+  full-cel snapshot itself is discarded once the rect is known, so undo
+  memory stays proportional to what actually changed, not to canvas size.
+  This is coarser than Trace's own undo, which can snapshot precisely the
+  stroke's dirty rect from the very start because the wet layer keeps the
+  pre-stroke pixels untouched underneath while drawing happens elsewhere;
+  without that staging surface there's no untouched copy to read a
+  precise rect from mid-stroke, so the whole cel has to be read up front
+  instead. A real, accepted cost of that earlier simplification, not new
+  debt introduced here. `history.push()` is used (not `run()`) since the
+  stroke has already executed live by the time `endStroke` runs.
+- **Bucket fill**: `history.run()` instead, since the fill hasn't executed
+  at all until the command's own `redo()` is called for the first time —
+  the before/after pixels come from the flood worker's own returned
+  sub-rect, reusing the same `extractRect` helper.
+- **Clear**: the simple case, a full-cel before/after snapshot.
+
+All three route through `ensureCel`'s `{cel, created}` return (mirroring
+Trace's own pattern) so that undoing the action that created a layer's
+very first cel removes the cel entirely, rather than leaving an empty one
+behind.
+
+UI: Undo/Redo buttons in `DrawingCanvas.tsx` show the pending command's
+label (`history.undoLabel`/`redoLabel`) and disable when there's nothing
+to do; Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z, and Ctrl+Y are wired as global
+keyboard shortcuts, guarded against firing while a form control has
+focus. Subscribing to `history` deliberately avoids `useSyncExternalStore`
+here: its internal subscribe effect can run before a separate effect that
+creates the subscribable object, silently missing the subscription on
+first mount if the `Engine` and the subscription are created in different
+effects. Fixed by subscribing to `engine.history` inside the exact same
+`useEffect` that constructs the `Engine`, forcing re-renders with a plain
+`useState` counter instead.
+
+Two bugs caught before they shipped:
+- A no-op ternary in `endStroke`'s label logic — it read `this.strokeBrush`
+  to decide the label AFTER already setting `this.strokeBrush = null` a
+  few lines above, so the ternary always took its false branch. Caught by
+  re-reading the method, fixed by capturing the label into a local
+  constant before nulling the field.
+- `runFloodFillWorker` transfers `target.buffer` via `postMessage`'s
+  zero-copy transfer list, which detaches it on the sending side —
+  `floodFill`'s undo needs `target`'s pre-fill pixels, so `target.slice()`
+  has to happen BEFORE the transfer, not after. Caught by reasoning about
+  transfer semantics ahead of time, not by a failing test.
+
+Verified with a new `scripts/undo-smoke.mjs` (Playwright): real
+pointer-drawn strokes (not synthetic `Stamp` arrays), a real bucket fill,
+and the Clear button, each undone and redone through the actual UI —
+buttons and keyboard shortcuts alike. Covers: nothing to undo before any
+drawing; a stroke undone (button) and redone (keyboard); two strokes
+undoing independently in the right order; drawing after an undo discarding
+the redo stack; Clear undone back to the prior drawing; a bucket fill
+undone and redone with the right color/blank state at each step.
+
+Building the test surfaced a measurement issue, not a product bug: the
+'marker' brush preset used for these checks is a chisel tip (`aspect:
+0.35` in `core/brush.ts`), so its actual cross-stroke width is
+`size(28) * aspect` ≈ 9.8px, not the full 28px diameter assumed at first —
+a wide averaging box centered on the stroke was diluting that thin line's
+darkness into a false "not visible" reading on presence checks. Confirmed
+by scanning actual rendered pixels directly rather than guessing, then
+fixed the same way `bucket-smoke.mjs` already handles thin ink (e.g. its
+check that the fineliner outline itself is untouched by a fill): shrink
+the sampling window so it fits inside the known stroke width, but only for
+*presence* checks — checks for blank paper keep the wider window since an
+empty area stays reliably blank regardless of box size.
+
+All four prior Playwright smoke tests (`renderer-smoke`, `persistence-smoke`,
+`drawing-smoke`, `bucket-smoke`) re-run alongside this one with no
+regressions. `npx tsc -b --noEmit`, `npm run lint`, `npm run build`, and
+`npm test` (131/131) all clean.
+
 ### 2026-09-10 — Task 2.7 (new): bucket fill — tolerance, edge expansion, real gap closure, reference-layer fill
 
 Owner brought two feature ideas from a reference video (a smart bucket

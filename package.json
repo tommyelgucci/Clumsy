@@ -13,6 +13,7 @@
     "test:persistence-smoke": "node scripts/persistence-smoke.mjs",
     "test:drawing-smoke": "node scripts/drawing-smoke.mjs",
     "test:bucket-smoke": "node scripts/bucket-smoke.mjs",
+    "test:undo-smoke": "node scripts/undo-smoke.mjs",
     "cap:sync": "cap sync ios",
     "cap:open": "cap open ios"
   },

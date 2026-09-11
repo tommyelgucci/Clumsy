@@ -35,6 +35,12 @@ export function DrawingCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
   const [ready, setReady] = useState(false);
+  // Forces a re-render on every history change so the Undo/Redo buttons'
+  // disabled state stays current — subscribed inside the same effect
+  // that creates the engine (below), not via useSyncExternalStore: that
+  // hook's own subscribe effect can run before the engine-creation
+  // effect does, missing the subscription entirely on first mount.
+  const [, forceHistoryUpdate] = useState(0);
 
   const mode = useTool((s) => s.mode);
   const setMode = useTool((s) => s.setMode);
@@ -91,10 +97,36 @@ export function DrawingCanvas() {
     setReady(true);
     (window as unknown as { __clumsyloopEngine: Engine; __clumsyloopTool: typeof useTool }).__clumsyloopEngine = engine;
     (window as unknown as { __clumsyloopEngine: Engine; __clumsyloopTool: typeof useTool }).__clumsyloopTool = useTool;
+    const unsubscribeHistory = engine.history.subscribe(() => forceHistoryUpdate((v) => v + 1));
 
     return () => {
+      unsubscribeHistory();
       engineRef.current = null;
     };
+  }, []);
+
+  // Keyboard shortcuts: Ctrl/Cmd+Z to undo, Shift+Ctrl/Cmd+Z (or Ctrl+Y)
+  // to redo — the behavior any drawing app's users already expect.
+  // Skipped while a form control has focus, so it doesn't fight the
+  // palette dropdown or the native color input.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const target = e.target as HTMLElement | null;
+      if (target && /^(input|select|textarea)$/i.test(target.tagName)) return;
+      if (e.key.toLowerCase() === 'z' && e.shiftKey) {
+        e.preventDefault();
+        engineRef.current?.redo();
+      } else if (e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        engineRef.current?.undo();
+      } else if (e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        engineRef.current?.redo();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   const drawingId = useRef<number | null>(null);
@@ -154,6 +186,10 @@ export function DrawingCanvas() {
     engineRef.current?.clearActiveLayer();
   };
 
+  const history = engineRef.current?.history;
+  const canUndo = history?.canUndo ?? false;
+  const canRedo = history?.canRedo ?? false;
+
   return (
     <div>
       <h2>Drawing</h2>
@@ -172,6 +208,12 @@ export function DrawingCanvas() {
 
       <div>
         <button onClick={handleClear}>Clear</button>
+        <button onClick={() => engineRef.current?.undo()} disabled={!canUndo} title="Ctrl/Cmd+Z">
+          Undo{canUndo ? ` (${history!.undoLabel})` : ''}
+        </button>
+        <button onClick={() => engineRef.current?.redo()} disabled={!canRedo} title="Shift+Ctrl/Cmd+Z">
+          Redo{canRedo ? ` (${history!.redoLabel})` : ''}
+        </button>
       </div>
 
       <div>

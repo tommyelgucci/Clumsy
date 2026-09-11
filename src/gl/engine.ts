@@ -11,8 +11,11 @@
  * outside React's own state flow. This engine has exactly one consumer
  * so far, the canvas itself, and it updates the canvas imperatively via
  * `renderAndPresent()` right after every mutation — there's no second
- * listener yet to justify the pub-sub machinery. Add it when a real one
- * shows up (a layers panel, a frame counter), not before.
+ * listener yet to justify the pub-sub machinery. `history` (below) gets
+ * its own `subscribe()` from `core/history.ts` directly, since an
+ * undo/redo button genuinely does need to react independently of the
+ * canvas's own imperative redraw — that's the one exception, not a
+ * reversal of the no-pub-sub call.
  *
  * Also minimal on purpose: single frame (frame 0), no timeline yet — the
  * capture UI (task 2.3) is what actually needs multiple frames, and
@@ -22,24 +25,38 @@
  * stamps go straight onto the permanent cel as they arrive. That means
  * no pigment-mix blending for the one `brush.ts` preset that wants it
  * ("Watercolor", `pigmentMix: 0.15`) and no "cancel this stroke" gesture
- * — both real, deferred simplifications, not oversights.
+ * — both real, deferred simplifications, not oversights. It also means
+ * undo (task added 2026-09-11) can't snapshot just the stroke's dirty
+ * rect the way Trace does (that needs the pre-stroke pixels still
+ * sitting untouched on a wet layer) — here the whole cel gets read back
+ * once at `beginStroke`, before anything is drawn, and only the final
+ * dirty rect (tracked via `expandRect` per stamp, same padding Trace
+ * uses) is what actually gets kept in the `Command`.
  */
+import { History, type Command } from '../core/history';
 import { StrokeBuilder, type BrushPreset } from '../core/brush';
 import { generateBrushTexturePixels, isBuiltinTextureId } from '../core/brushTexture';
 import { celAt, uid, type Cel, type ClumsyloopDocument, type Layer } from '../core/document';
+import { extractRect } from '../core/flood';
 import { mat3FromTRS } from '../core/math';
-import type { InputSample, RGB, Stamp } from '../core/types';
+import { clampRect, emptyRect, expandRect, rectIsEmpty, type InputSample, type RGB, type Stamp } from '../core/types';
 import type { FloodFillResponse } from '../workers/floodFill.worker';
 import { Renderer } from './renderer';
 
 export class Engine {
   readonly renderer: Renderer;
   readonly doc: ClumsyloopDocument;
+  readonly history = new History();
   private _activeLayerId: string;
 
   private builder: StrokeBuilder | null = null;
   private strokeBrush: BrushPreset | null = null;
   private strokeColor: RGB = { r: 0, g: 0, b: 0 };
+  /** Undo bookkeeping for the stroke in progress — see `beginStroke`/`endStroke`. */
+  private strokeCel: Cel | null = null;
+  private strokeCelCreated = false;
+  private strokeBefore: Uint8Array | null = null;
+  private strokeRect = emptyRect();
 
   constructor(renderer: Renderer, doc: ClumsyloopDocument, activeLayerId: string) {
     this.renderer = renderer;
@@ -68,18 +85,21 @@ export class Engine {
     return layer;
   }
 
-  /** The active layer's cel at frame 0, created empty on first use.
-   *  Single-frame for now (see file header) — `celAt` still goes through
-   *  the real lookup rather than reading `.cels.get(0)` directly so this
-   *  keeps working unchanged once a timeline lets frame 0 hold a cel that
+  /** The active layer's cel at frame 0, creating one if none exists yet.
+   *  `created` tells the caller whether to remove the cel entirely on
+   *  undo (matching Trace's `ensureCel`) — a stroke or fill that made a
+   *  brand-new cel didn't just edit pixels, it also brought the cel
+   *  itself into existence, and undo has to reverse both. Single-frame
+   *  for now (see file header) — `celAt` still goes through the real
+   *  lookup rather than reading `.cels.get(0)` directly so this keeps
+   *  working unchanged once a timeline lets frame 0 hold a cel that
    *  actually started earlier (it can't yet: nothing sets a cel below 0). */
-  private activeCel(): Cel {
-    const layer = this.activeLayer;
+  private ensureCel(layer: Layer): { cel: Cel; created: boolean } {
     const existing = celAt(layer, 0);
-    if (existing) return existing;
+    if (existing) return { cel: existing, created: false };
     const cel: Cel = { id: uid('cel'), surface: this.renderer.createSurface(`${layer.id}-cel`) };
     layer.cels.set(0, cel);
-    return cel;
+    return { cel, created: true };
   }
 
   private brushTexture(brush: BrushPreset): WebGLTexture | undefined {
@@ -92,6 +112,15 @@ export class Engine {
     this.strokeBrush = brush;
     this.strokeColor = color;
     this.builder = new StrokeBuilder(brush);
+    const { cel, created } = this.ensureCel(this.activeLayer);
+    this.strokeCel = cel;
+    this.strokeCelCreated = created;
+    // The one full-cel read this whole approach costs (see file header)
+    // — taken now, before a single stamp lands, so it's the exact
+    // pre-stroke state regardless of how big the stroke's dirty rect
+    // ends up being.
+    this.strokeBefore = this.renderer.readRect(cel.surface, 0, 0, this.doc.width, this.doc.height);
+    this.strokeRect = emptyRect();
     this.paintStamps(this.builder.begin(sample));
   }
 
@@ -101,22 +130,90 @@ export class Engine {
   }
 
   endStroke() {
-    if (!this.builder) return;
+    if (!this.builder || !this.strokeCel || !this.strokeBefore) {
+      this.builder = null;
+      return;
+    }
     this.paintStamps(this.builder.end());
     this.builder = null;
+    const label = this.strokeBrush?.erase ? 'Erase' : 'Stroke';
     this.strokeBrush = null;
+
+    const cel = this.strokeCel;
+    const created = this.strokeCelCreated;
+    const fullBefore = this.strokeBefore;
+    const layer = this.activeLayer;
+    this.strokeCel = null;
+    this.strokeBefore = null;
+
+    const rect = clampRect(this.strokeRect, this.doc.width, this.doc.height);
+    this.strokeRect = emptyRect();
+    if (rectIsEmpty(rect)) {
+      // A tap that produced no stamps at all (shouldn't normally happen —
+      // StrokeBuilder.begin() always emits at least one — but a
+      // just-created cel shouldn't be left behind for nothing either way).
+      if (created) layer.cels.delete(0);
+      return;
+    }
+
+    const rectW = rect.x2 - rect.x;
+    const rectH = rect.y2 - rect.y;
+    const before = extractRect(fullBefore, this.doc.width, rect);
+    const after = this.renderer.readRect(cel.surface, rect.x, rect.y, rectW, rectH);
+
+    // `push`, not `run`: the stroke already happened live, stamp by
+    // stamp, while it was being drawn — this only records it.
+    this.history.push({
+      label,
+      cost: before.byteLength + after.byteLength,
+      redo: () => {
+        if (created) layer.cels.set(0, cel);
+        this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, after);
+      },
+      undo: () => {
+        this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, before);
+        if (created) layer.cels.delete(0);
+      },
+    });
   }
 
   private paintStamps(stamps: Stamp[]) {
-    if (stamps.length === 0 || !this.strokeBrush) return;
-    const cel = this.activeCel();
-    this.renderer.drawStamps(cel.surface, stamps, this.strokeColor, this.brushTexture(this.strokeBrush), this.strokeBrush.erase);
+    if (stamps.length === 0 || !this.strokeBrush || !this.strokeCel) return;
+    for (const s of stamps) expandRect(this.strokeRect, s.x, s.y, s.size * 0.75 + 2);
+    this.renderer.drawStamps(this.strokeCel.surface, stamps, this.strokeColor, this.brushTexture(this.strokeBrush), this.strokeBrush.erase);
     this.renderAndPresent();
   }
 
+  /** Clears the active layer's cel, undoably. A no-op (no history entry)
+   *  on a layer with nothing to clear — clicking Clear on a blank layer
+   *  shouldn't leave a phantom empty cel behind for undo to trip over. */
   clearActiveLayer() {
-    this.renderer.clear(this.activeCel().surface);
+    const layer = this.activeLayer;
+    const cel = celAt(layer, 0);
+    if (!cel || cel.surface.empty) return;
+    const w = this.doc.width;
+    const h = this.doc.height;
+    const before = this.renderer.readRect(cel.surface, 0, 0, w, h);
+    this.renderer.clear(cel.surface);
+    this.history.push({
+      label: 'Clear',
+      cost: before.byteLength,
+      redo: () => this.renderer.clear(cel.surface),
+      undo: () => this.renderer.writeRect(cel.surface, 0, 0, w, h, before),
+    });
     this.renderAndPresent();
+  }
+
+  undo(): boolean {
+    const did = this.history.undo();
+    if (did) this.renderAndPresent();
+    return did;
+  }
+
+  redo(): boolean {
+    const did = this.history.redo();
+    if (did) this.renderAndPresent();
+    return did;
   }
 
   /** Lazy worker for the CPU-side part of `floodFill` — one thread for
@@ -156,9 +253,9 @@ export class Engine {
       const worker = this.getFloodWorker();
       const id = ++this.floodRequestId;
       this.floodPending.set(id, resolve);
-      // Both buffers are transferred, not copied — the caller already
-      // took its own copy of `target` before this (see `floodFill`), so
-      // it doesn't need either one back.
+      // Both buffers are transferred, not copied — the caller (below)
+      // already took its own copy of `target` before this, precisely
+      // because this transfer detaches the original.
       worker.postMessage({ id, reference, target, w, h, sx, sy, tolerance, expand, gapClose, color, alphaLock }, [reference.buffer, target.buffer]);
     });
   }
@@ -178,9 +275,7 @@ export class Engine {
    * edge, to cover antialiasing) — see `core/flood.ts`.
    *
    * No-op on a locked, hidden, or non-`draw` layer — filling a camera
-   * photo or a locked layer doesn't make sense. No undo yet: this engine
-   * doesn't wire `history.ts` for strokes either (see the file header),
-   * so a single tool having it would be inconsistent, not an improvement.
+   * photo or a locked layer doesn't make sense.
    */
   async floodFill(x: number, y: number, color: RGB, tolerance = 0.15, expand = 2, gapClose = 2): Promise<void> {
     const layer = this.activeLayer;
@@ -192,11 +287,33 @@ export class Engine {
     if (sx < 0 || sy < 0 || sx >= w || sy >= h) return;
 
     const reference = this.renderer.readRect(this.renderer.renderDocumentFrame(this.doc, 0), 0, 0, w, h);
-    const cel = this.activeCel();
+    const { cel, created } = this.ensureCel(layer);
     const target = this.renderer.readRect(cel.surface, 0, 0, w, h);
+    // `target`'s buffer is about to be transferred into the worker
+    // (zero-copy — see `runFloodFillWorker`), which detaches it on this
+    // side; undo needs its own untouched copy, taken before that happens.
+    const targetSnapshot = target.slice();
 
     const { sub, rect } = await this.runFloodFillWorker(reference, target, w, h, sx, sy, tolerance, expand, gapClose, color, layer.alphaLock);
-    this.renderer.writeRect(cel.surface, rect.x, rect.y, rect.x2 - rect.x, rect.y2 - rect.y, sub);
+    const rectW = rect.x2 - rect.x;
+    const rectH = rect.y2 - rect.y;
+    const before = extractRect(targetSnapshot, w, rect);
+
+    const cmd: Command = {
+      label: 'Fill',
+      cost: sub.byteLength + before.byteLength,
+      redo: () => {
+        if (created) layer.cels.set(0, cel);
+        this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, sub);
+      },
+      undo: () => {
+        this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, before);
+        if (created) layer.cels.delete(0);
+      },
+    };
+    // `run`, not `push`: unlike a stroke, nothing has actually been
+    // written to the GPU yet — `redo()` is what performs the fill.
+    this.history.run(cmd);
     this.renderAndPresent();
   }
 
