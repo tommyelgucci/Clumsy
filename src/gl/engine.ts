@@ -79,6 +79,27 @@
  * explicit "start animating" step before every adjustment, only before
  * the first one (`toggleKeyframeHere` is that explicit step, and also
  * how to remove one).
+ *
+ * Lasso selection (task 2.17): `beginLassoAt`/`selectionContains`/
+ * `setLassoSelection` rasterize a freehand closed path (`core/
+ * selection.ts`, pure JS scanline fill — no DOM, unlike Trace's own
+ * canvas-based rasterizer, see that module's header) into a mask; a
+ * separate `beginMoveSelection`/`moveSelectionTo`/`endMoveSelection` trio
+ * lifts the masked pixels of the active layer's current cel into a
+ * floating scratch surface and lets it be dragged, composited live as an
+ * overlay the same way a wet stroke is (`activeStrokeOverlay`, generalized
+ * below into `activeOverlay` so the two share one seam into
+ * `renderDocumentFrame`'s single `wetOverlay` param — a stroke and a
+ * selection move can never be in progress at the same time, since they're
+ * different tool modes, so there's never a real conflict over that one
+ * slot). Scoped deliberately narrow for this first pass: a selection only
+ * affects the lasso tool's own move gesture — switching to Draw/Bucket
+ * with a selection still active does NOT constrain painting to it, no
+ * copy/duplicate (only move), no resize/rotate of the floating piece, and
+ * a moved selection can't be dragged partially off-canvas (clamped fully
+ * on-screen instead of clipping a partially-offscreen floating rect,
+ * which `writeRect` isn't built to do safely). Real follow-ups, not
+ * oversights — see checkpoint.md.
  */
 import { History, type Command } from '../core/history';
 import { StrokeBuilder, type BrushPreset } from '../core/brush';
@@ -98,10 +119,19 @@ import {
   type TransformProp,
 } from '../core/document';
 import { extractRect } from '../core/flood';
-import { mat3FromTRS } from '../core/math';
-import { clampRect, emptyRect, expandRect, rectIsEmpty, type InputSample, type RGB, type Stamp } from '../core/types';
+import { clamp, mat3FromTRS } from '../core/math';
+import { maskContains, polygonBounds, rasterizePolygon } from '../core/selection';
+import { clampRect, emptyRect, expandRect, rectIsEmpty, type DocPoint, type InputSample, type RGB, type Rect, type Stamp } from '../core/types';
 import type { FloodFillResponse } from '../workers/floodFill.worker';
 import { Renderer, type Surface } from './renderer';
+
+export interface Selection {
+  rect: Rect;
+  mask: Uint8Array;
+  /** Kept purely for the UI's outline overlay — the engine itself only
+   *  ever needs `rect`/`mask`. */
+  points: DocPoint[];
+}
 
 export class Engine {
   readonly renderer: Renderer;
@@ -139,6 +169,25 @@ export class Engine {
   private strokeCelCreated = false;
   private strokeBefore: Uint8Array | null = null;
   private strokeRect = emptyRect();
+
+  /** The current lasso selection, if any — persists across tool
+   *  switches (matching how selections behave in any other drawing
+   *  app) until explicitly cleared. */
+  selection: Selection | null = null;
+  /** Bookkeeping for a selection move in progress — see
+   *  `beginMoveSelection`/`moveSelectionTo`/`endMoveSelection`. */
+  private moveDrag: {
+    layer: Layer;
+    cel: Cel;
+    fullBefore: Uint8Array;
+    floating: Uint8Array;
+    w: number;
+    h: number;
+    originRect: Rect;
+    currentRect: Rect;
+    startX: number;
+    startY: number;
+  } | null = null;
 
   constructor(renderer: Renderer, doc: ClumsyloopDocument, activeLayerId: string) {
     this.renderer = renderer;
@@ -440,6 +489,155 @@ export class Engine {
     this.renderAndPresent();
   }
 
+  /** Rasterizes a freehand closed path into the current selection —
+   *  replaces whatever selection existed before. Fewer than 3 points (a
+   *  tap, not a drag) produces an all-empty mask via `rasterizePolygon`
+   *  itself, so this is a safe no-op-ish call either way; the UI is the
+   *  one that decides whether to call this at all vs. treating the
+   *  gesture as a move (see `selectionContains`). Not undoable: a
+   *  selection isn't document content, the same reasoning `setOnionSkin`/
+   *  `setCurrentFrame` already use for view/tool state that isn't pixels. */
+  setLassoSelection(points: DocPoint[]) {
+    const rect = polygonBounds(points, this.doc.width, this.doc.height);
+    const mask = rasterizePolygon(points, rect);
+    this.selection = { rect, mask, points };
+    this.renderAndPresent();
+  }
+
+  clearSelection() {
+    if (!this.selection) return;
+    this.selection = null;
+    this.renderAndPresent();
+  }
+
+  /** Whether document point `(x, y)` falls inside the current selection
+   *  — the UI uses this at pointerdown to decide "grab the selection to
+   *  move it" (inside) vs. "start a new lasso path" (outside). */
+  selectionContains(x: number, y: number): boolean {
+    return this.selection !== null && maskContains(this.selection.mask, this.selection.rect, x, y);
+  }
+
+  /** Lifts the selection's masked pixels off the active layer's current
+   *  cel into a floating buffer, zeroing them in place (a "cut") — the
+   *  floating piece then follows the pointer via `moveSelectionTo` until
+   *  `endMoveSelection` pastes it back down. No-op if there's no
+   *  selection, no cel to cut from, or the layer is locked/hidden/not a
+   *  draw layer (same guard `beginStroke`/`floodFill` already use). */
+  beginMoveSelection(sample: DocPoint) {
+    if (!this.selection) return;
+    const layer = this.activeLayer;
+    if (layer.locked || !layer.visible || layer.kind !== 'draw') return;
+    const cel = celAt(layer, this._currentFrame);
+    if (!cel) return;
+    const { rect, mask } = this.selection;
+    const w = rect.x2 - rect.x;
+    const h = rect.y2 - rect.y;
+    if (w <= 0 || h <= 0) return;
+
+    const fullBefore = this.renderer.readRect(cel.surface, 0, 0, this.doc.width, this.doc.height);
+    const original = extractRect(fullBefore, this.doc.width, rect);
+    const floating = new Uint8Array(original.length);
+    const cutRegion = original.slice();
+    for (let i = 0; i < mask.length; i++) {
+      if (!mask[i]) continue;
+      const o = i * 4;
+      floating[o] = original[o];
+      floating[o + 1] = original[o + 1];
+      floating[o + 2] = original[o + 2];
+      floating[o + 3] = original[o + 3];
+      cutRegion[o] = 0;
+      cutRegion[o + 1] = 0;
+      cutRegion[o + 2] = 0;
+      cutRegion[o + 3] = 0;
+    }
+    this.renderer.writeRect(cel.surface, rect.x, rect.y, w, h, cutRegion);
+    // The floating piece is placed at its origin position right away —
+    // not deferred until the first `moveSelectionTo` call — so that a
+    // pointer-down immediately followed by pointer-up with no drag in
+    // between still has something for `endMoveSelection`'s `drawOver` to
+    // paste back; otherwise a plain click would cut the selection away
+    // and never reconstruct it (the scratch surface would still be
+    // blank at that point).
+    const floatSurface = this.renderer.scratch('selectionFloat');
+    this.renderer.clear(floatSurface);
+    this.renderer.writeRect(floatSurface, rect.x, rect.y, w, h, floating);
+
+    this.moveDrag = { layer, cel, fullBefore, floating, w, h, originRect: rect, currentRect: rect, startX: sample.x, startY: sample.y };
+    this.renderAndPresent();
+  }
+
+  /** Live drag: places the floating piece at its new position in a
+   *  scratch surface, composited as an overlay on top of the (already
+   *  cut) permanent cel — see `activeOverlay`/`rasterizeLayer`'s
+   *  `wetOverlay` param, the exact same mechanism a wet stroke's live
+   *  preview already uses. Clamped fully on-canvas (see file header). */
+  moveSelectionTo(sample: DocPoint) {
+    if (!this.moveDrag) return;
+    const { originRect, floating, w, h } = this.moveDrag;
+    const dx = Math.round(sample.x - this.moveDrag.startX);
+    const dy = Math.round(sample.y - this.moveDrag.startY);
+    const nx = clamp(originRect.x + dx, 0, Math.max(0, this.doc.width - w));
+    const ny = clamp(originRect.y + dy, 0, Math.max(0, this.doc.height - h));
+
+    const preview = this.renderer.scratch('selectionFloat');
+    this.renderer.clear(preview);
+    this.renderer.writeRect(preview, nx, ny, w, h, floating);
+    this.moveDrag.currentRect = { x: nx, y: ny, x2: nx + w, y2: ny + h };
+    this.renderAndPresent();
+  }
+
+  /** Pastes the floating piece down at its final position via `drawOver`
+   *  (proper alpha compositing, not a raw overwrite) so whatever was
+   *  already at the destination outside the mask's shape survives —
+   *  `writeRect` alone would have clobbered it with the floating
+   *  buffer's transparent (non-masked) pixels. The whole gesture (cut +
+   *  paste) becomes one undo step via a full-cel before/after snapshot —
+   *  simpler than tracking two possibly non-overlapping rects
+   *  separately, and this engine already accepts that cost for the
+   *  erase path (see file header) for the same reason. A pointer-down
+   *  immediately followed by pointer-up with no actual drag reconstructs
+   *  the original cel exactly (cut then paste-at-the-same-spot is a
+   *  no-op) and is detected and skipped rather than recorded. */
+  endMoveSelection() {
+    if (!this.moveDrag) return;
+    const { cel, fullBefore, originRect, currentRect } = this.moveDrag;
+    this.moveDrag = null;
+    if (!this.selection) return;
+
+    const floatSurface = this.renderer.scratch('selectionFloat');
+    this.renderer.drawOver(cel.surface, floatSurface, 1);
+    this.renderer.clear(floatSurface);
+
+    const moved = currentRect.x !== originRect.x || currentRect.y !== originRect.y;
+    const oldSelection = this.selection;
+    const newSelection: Selection = {
+      rect: currentRect,
+      mask: oldSelection.mask,
+      points: oldSelection.points.map((p) => ({ x: p.x + (currentRect.x - originRect.x), y: p.y + (currentRect.y - originRect.y) })),
+    };
+    this.selection = newSelection;
+
+    if (!moved) {
+      this.renderAndPresent();
+      return;
+    }
+
+    const fullAfter = this.renderer.readRect(cel.surface, 0, 0, this.doc.width, this.doc.height);
+    this.history.push({
+      label: 'Move selection',
+      cost: fullBefore.byteLength + fullAfter.byteLength,
+      redo: () => {
+        this.renderer.writeRect(cel.surface, 0, 0, this.doc.width, this.doc.height, fullAfter);
+        this.selection = newSelection;
+      },
+      undo: () => {
+        this.renderer.writeRect(cel.surface, 0, 0, this.doc.width, this.doc.height, fullBefore);
+        this.selection = oldSelection;
+      },
+    });
+    this.renderAndPresent();
+  }
+
   /** The active layer's cel held at `frame` (defaults to the current
    *  playhead), creating one if none exists yet. `celAt` finds the most
    *  recently *started* cel at or before `frame`, not one at that exact
@@ -597,13 +795,20 @@ export class Engine {
     this.renderAndPresent();
   }
 
-  /** The wet surface composited live on top of the active layer's cel,
-   *  while a non-erase stroke is in progress — see `renderAndPresent`
-   *  and `Renderer.renderDocumentFrame`'s `wetOverlay` param. `undefined`
-   *  the rest of the time, which renders exactly as before task 2.10. */
-  private activeStrokeOverlay(): { layerId: string; surface: Surface } | undefined {
-    if (!this.builder || !this.strokeUsesWet || !this.strokeLayer) return undefined;
-    return { layerId: this.strokeLayer.id, surface: this.renderer.scratch('wetStroke') };
+  /** The one overlay composited live on top of a layer's cel this frame,
+   *  if any — either a wet stroke in progress (task 2.10) or a selection
+   *  move in progress (task 2.17), never both at once, since they're
+   *  different tool modes. See `renderAndPresent` and
+   *  `Renderer.renderDocumentFrame`'s `wetOverlay` param. `undefined` the
+   *  rest of the time, which renders exactly as before either task. */
+  private activeOverlay(): { layerId: string; surface: Surface } | undefined {
+    if (this.builder && this.strokeUsesWet && this.strokeLayer) {
+      return { layerId: this.strokeLayer.id, surface: this.renderer.scratch('wetStroke') };
+    }
+    if (this.moveDrag) {
+      return { layerId: this.moveDrag.layer.id, surface: this.renderer.scratch('selectionFloat') };
+    }
+    return undefined;
   }
 
   /** Clears the active layer's cel, undoably. A no-op (no history entry)
@@ -758,7 +963,7 @@ export class Engine {
    *  accumulator scratches — see that method's own doc comment on why
    *  holding two results across a second call otherwise aliases. */
   renderAndPresent() {
-    const overlay = this.activeStrokeOverlay();
+    const overlay = this.activeOverlay();
     let result: Surface;
     if (this._onionSkin && this._currentFrame > 0) {
       const acc = this.renderer.scratch('onionAcc');

@@ -175,6 +175,14 @@ export function NewProjectIcon({ size = 16 }: IconProps) {
   );
 }
 
+export function LassoIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common} strokeDasharray="2.5 2.5">
+      <path d="M12 3c-5 0-9 3-9 7 0 3 2.5 5 5.5 5.5L7 20l3-2.5c.6.1 1.3.2 2 .2 5 0 9-3 9-7s-4-7-9-7Z" />
+    </svg>
+  );
+}
+
 export function TransformIcon({ size = 16 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>

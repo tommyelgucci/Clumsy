@@ -47,17 +47,19 @@ const toScreen = (docX, docY) => ({
 
 // renderDocumentFrame's wetOverlay is what the canvas's own live preview
 // actually uses (Engine.renderAndPresent computes it via the private
-// activeStrokeOverlay() on every stamp) — reached here through bracket
-// access since TS privacy is compile-time only. Reading back through
-// renderer.toImageData() rather than a canvas screenshot avoids this
-// project's own documented preserveDrawingBuffer:false trap (see
-// checkpoint.md's task 2.2 entry): the visible <canvas> itself can't be
-// read reliably in a script, but re-deriving the same composite can.
+// activeOverlay() on every stamp — renamed from activeStrokeOverlay in
+// task 2.17, generalized to also cover a selection move in progress)
+// — reached here through bracket access since TS privacy is compile-time
+// only. Reading back through renderer.toImageData() rather than a canvas
+// screenshot avoids this project's own documented
+// preserveDrawingBuffer:false trap (see checkpoint.md's task 2.2 entry):
+// the visible <canvas> itself can't be read reliably in a script, but
+// re-deriving the same composite can.
 const avgAt = (docX, docY, half = 10) =>
   page.evaluate(
     ({ docX, docY, half }) => {
       const engine = window.__clumsyloopEngine;
-      const overlay = engine['activeStrokeOverlay']();
+      const overlay = engine['activeOverlay']();
       const result = engine.renderer.renderDocumentFrame(engine.doc, 0, overlay);
       const data = engine.renderer.toImageData(result);
       let r = 0, g = 0, b = 0, n = 0;

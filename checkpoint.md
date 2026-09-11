@@ -1,5 +1,64 @@
 # Checkpoint — Progress log
 
+### 2026-09-11 — Task 2.17 (new): lasso selection — draw, move, undo/redo
+
+Second half of the owner's "push further on the animation engine
+(keyframes and lasso)" request. Unlike keyframes, which only needed a UI
+on top of an already-ported data model, lasso selection had zero
+groundwork — a genuinely new engine feature.
+
+New `core/selection.ts` rasterizes a closed freehand path into a 0/1
+mask via a pure-JS even-odd scanline fill, deliberately NOT the
+Canvas2D-based rasterizer Trace's own `core/selection.ts` uses: that
+would break this project's "core/ pure, no DOM" rule (Trace's own
+version of that rule already carries a canvas exception; Clumsyloop's
+doesn't), and this project's `core/*.test.ts` files run under plain Node
+with no DOM at all, so a canvas-based rasterizer couldn't be unit tested
+the way `core/flood.ts` already is. Trade-off: a hard, non-antialiased
+selection edge — the same reasoning `core/flood.ts`'s own tolerance test
+already accepts for a fill boundary.
+
+`gl/engine.ts` gained `setLassoSelection`/`clearSelection`/
+`selectionContains` and a `beginMoveSelection`/`moveSelectionTo`/
+`endMoveSelection` trio: the move cuts the masked pixels into a floating
+buffer, previews the drag live via a scratch surface composited as an
+overlay (the same mechanism a wet stroke's live preview already uses —
+`activeStrokeOverlay` got renamed to `activeOverlay` to cover both,
+since a stroke and a selection move can never be in progress at once),
+and pastes the result down via `drawOver` (proper alpha compositing)
+rather than `writeRect`, so whatever was already at the destination
+outside the mask's shape survives. The whole cut+paste gesture is one
+undo step via a full-cel before/after snapshot.
+
+New `'lasso'` tool mode in `DrawingCanvas.tsx`: pointer handlers hit-test
+`engine.selectionContains` at pointerdown to tell "start a new lasso"
+from "grab the existing selection to move it" apart. The outline (both
+the in-progress path and the committed selection, animated as marching
+ants) renders in a new SVG overlay that shares the canvas's own
+object-fit:contain-equivalent scaling via `preserveAspectRatio`, needing
+no manual coordinate math.
+
+Two real bugs caught and fixed while building this: a plain click
+without dragging would cut the selection's pixels away and never
+restore them (the floating scratch was only populated by the drag
+handler, which a click never calls) — fixed by placing the floating
+buffer at its origin immediately in `beginMoveSelection`. And calling an
+engine mutation from inside a `setLassoPath` functional state updater
+produced a genuine React warning (updater functions must stay pure) —
+fixed by reading the state value directly instead. A third, cosmetic bug
+only surfaced by actually looking at a screenshot: the selection
+outline's white stroke was invisible against white paper — changed to
+the app's accent blue.
+
+Verified via a new `scripts/lasso-smoke.mjs` and 7 new unit tests in
+`selection.test.ts`. All 11 Playwright smoke tests, 138 unit tests,
+`tsc`, `lint`, and `build` all clean.
+
+Deliberately out of scope, real follow-ups: a selection doesn't
+constrain painting outside the lasso tool's own move gesture, no
+copy/duplicate (only move), no resize/rotate of the floating piece, and
+a moved selection can't be dragged partially off-canvas.
+
 ### 2026-09-11 — Task 2.16 (new): keyframed layer transforms — the Transform panel
 
 Owner asked to push further on the animation engine specifically —

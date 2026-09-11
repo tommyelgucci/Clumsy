@@ -84,6 +84,53 @@
   display: block;
 }
 
+/* -- Lasso selection overlay (task 2.17) -- */
+
+.cl-selection-overlay {
+  /* Shares the canvas's own object-fit:contain-equivalent scaling via
+     preserveAspectRatio (set in the JSX, matched to the viewBox) — see
+     DrawingCanvas.tsx's own comment on why this needs no manual
+     scale/offset math, unlike the pointer handlers. */
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 12;
+  pointer-events: none;
+}
+
+.cl-lasso-path,
+.cl-selection-outline {
+  fill: none;
+  /* A plain white stroke (this app's usual UI-chrome color) is invisible
+     against white paper, the default document background — the accent
+     blue reads clearly against both a light canvas and this app's own
+     dark chrome. */
+  stroke: var(--accent);
+  stroke-width: 2;
+  /* Keeps the stroke a constant on-screen width regardless of how much
+     the viewBox scales the document's own pixel coordinates up or down
+     to fit the container. */
+  vector-effect: non-scaling-stroke;
+  paint-order: stroke;
+}
+
+.cl-lasso-path {
+  stroke-dasharray: 3 3;
+  opacity: 0.85;
+}
+
+.cl-selection-outline {
+  stroke-dasharray: 4 3;
+  animation: cl-marching-ants 0.6s linear infinite;
+}
+
+@keyframes cl-marching-ants {
+  to {
+    stroke-dashoffset: -7;
+  }
+}
+
 .cl-status {
   position: absolute;
   left: 50%;

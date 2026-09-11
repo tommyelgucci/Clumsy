@@ -8,7 +8,7 @@ import { Engine } from '../gl/engine';
 import { Renderer } from '../gl/renderer';
 import './drawing.css';
 import { FloatingPanel } from './FloatingPanel';
-import { BucketIcon, LayersIcon, NewProjectIcon, PencilIcon, RedoIcon, TransformIcon, TrashIcon, UndoIcon } from './icons';
+import { BucketIcon, CloseIcon, LassoIcon, LayersIcon, NewProjectIcon, PencilIcon, RedoIcon, TransformIcon, TrashIcon, UndoIcon } from './icons';
 import { LayersPanel } from './LayersPanel';
 import { Timeline } from './Timeline';
 import { TransformPanel } from './TransformPanel';
@@ -70,6 +70,14 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
   // hook's own subscribe effect can run before the engine-creation
   // effect does, missing the subscription entirely on first mount.
   const [, forceHistoryUpdate] = useState(0);
+  // Bumped after any engine call that changes `engine.selection` (it's
+  // engine state, not React state, same reasoning as the document
+  // itself — see CLAUDE.md) so the outline overlay below re-reads it.
+  // Deliberately NOT a full `engine.subscribe()` — that fires on every
+  // mutation, including every stamp of an in-progress stroke, and this
+  // component doesn't need to re-render that often just to keep an
+  // outline in sync.
+  const [, forceSelectionUpdate] = useState(0);
 
   const mode = useTool((s) => s.mode);
   const setMode = useTool((s) => s.setMode);
@@ -148,9 +156,14 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
   // palette dropdown or the native color input.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
       const target = e.target as HTMLElement | null;
       if (target && /^(input|select|textarea)$/i.test(target.tagName)) return;
+      if (e.key === 'Escape' && engineRef.current?.selection) {
+        engineRef.current.clearSelection();
+        forceSelectionUpdate((v) => v + 1);
+        return;
+      }
+      if (!(e.metaKey || e.ctrlKey)) return;
       if (e.key.toLowerCase() === 'z' && e.shiftKey) {
         e.preventDefault();
         engineRef.current?.redo();
@@ -208,6 +221,15 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
     return { x, y, pressure: clamp(pressure, 0.01, 1), altitude, azimuth, time: e.timeStamp || performance.now() };
   };
 
+  // Lasso (task 2.17): a drag starting INSIDE the existing selection
+  // moves it; a drag starting outside traces a new one. `lassoMoving`
+  // tracks which of those two this gesture is, decided once at
+  // pointerdown; `lassoPath` is the in-progress path's points, drawn
+  // live by the SVG overlay below and only handed to the engine (as a
+  // rasterized mask) once the gesture ends with `setLassoSelection`.
+  const lassoMoving = useRef(false);
+  const [lassoPath, setLassoPath] = useState<{ x: number; y: number }[]>([]);
+
   const handlePointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const engine = engineRef.current;
     if (!engine) return;
@@ -218,6 +240,18 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
       void engine.floodFill(sample.x, sample.y, strokeColorRef.current, toleranceRef.current, expandRef.current, gapCloseRef.current);
       return;
     }
+    if (modeRef.current === 'lasso') {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      drawingId.current = e.pointerId;
+      if (engine.selectionContains(sample.x, sample.y)) {
+        lassoMoving.current = true;
+        engine.beginMoveSelection(sample);
+      } else {
+        lassoMoving.current = false;
+        setLassoPath([{ x: sample.x, y: sample.y }]);
+      }
+      return;
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     drawingId.current = e.pointerId;
     engine.beginStroke(strokeBrushRef.current, strokeColorRef.current, sample);
@@ -225,13 +259,43 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
 
   const handlePointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     if (drawingId.current !== e.pointerId) return;
-    engineRef.current?.pushStroke(toSample(e));
+    const sample = toSample(e);
+    if (modeRef.current === 'lasso') {
+      if (lassoMoving.current) engineRef.current?.moveSelectionTo(sample);
+      else setLassoPath((prev) => [...prev, { x: sample.x, y: sample.y }]);
+      return;
+    }
+    engineRef.current?.pushStroke(sample);
   };
 
   const endStroke = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     if (drawingId.current !== e.pointerId) return;
     drawingId.current = null;
+    if (modeRef.current === 'lasso') {
+      if (lassoMoving.current) {
+        engineRef.current?.endMoveSelection();
+        lassoMoving.current = false;
+      } else {
+        // Reads `lassoPath` directly rather than through a setLassoPath
+        // updater function: React may invoke an updater more than once
+        // or outside a plain event-handler context (its contract
+        // requires updaters to be pure, side-effect-free), and
+        // `setLassoSelection` is a real engine mutation that notifies
+        // other subscribed components (Timeline) — doing that from
+        // inside an updater produced exactly the "setState while
+        // rendering a different component" warning React warns about.
+        if (lassoPath.length >= 3) engineRef.current?.setLassoSelection(lassoPath);
+        setLassoPath([]);
+      }
+      forceSelectionUpdate((v) => v + 1);
+      return;
+    }
     engineRef.current?.endStroke();
+  };
+
+  const handleDeselect = () => {
+    engineRef.current?.clearSelection();
+    forceSelectionUpdate((v) => v + 1);
   };
 
   const handleClear = () => {
@@ -256,6 +320,20 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
         onPointerCancel={endStroke}
       />
 
+      {/* Lasso outline (task 2.17): drawn in an SVG sharing the canvas's own
+          viewBox-to-container scaling (`preserveAspectRatio="xMidYMid meet"`
+          mirrors `object-fit: contain`), so document-space points can be
+          used directly with no manual scale/offset math — unlike the
+          pointer handlers above, which must convert the other direction
+          (client to document space) since native pointer events only ever
+          arrive in client coordinates. */}
+      <svg className="cl-selection-overlay" viewBox={`0 0 ${preset.width} ${preset.height}`} preserveAspectRatio="xMidYMid meet">
+        {lassoPath.length > 1 && <polyline className="cl-lasso-path" points={lassoPath.map((p) => `${p.x},${p.y}`).join(' ')} />}
+        {engineRef.current?.selection && (
+          <polygon className="cl-selection-outline" points={engineRef.current.selection.points.map((p) => `${p.x},${p.y}`).join(' ')} />
+        )}
+      </svg>
+
       <p className="cl-status">{ready ? 'Ready.' : 'Starting…'}</p>
 
       <div className="cl-rail cl-rail--left">
@@ -264,6 +342,9 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
         </button>
         <button className="cl-railbtn" aria-pressed={mode === 'bucket'} onClick={() => setMode('bucket')} aria-label="Bucket" title="Bucket fill">
           <BucketIcon />
+        </button>
+        <button className="cl-railbtn" aria-pressed={mode === 'lasso'} onClick={() => setMode('lasso')} aria-label="Lasso" title="Lasso select">
+          <LassoIcon />
         </button>
         <button
           className="cl-colorwell"
@@ -290,6 +371,14 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
                 <input type="range" min={0} max={8} step={1} value={gapClose} onChange={(e) => setGapClose(Number(e.target.value))} />
               </label>
             </div>
+          </>
+        )}
+        {mode === 'lasso' && engineRef.current?.selection && (
+          <>
+            <span className="cl-rail-divider" />
+            <button className="cl-railbtn" onClick={handleDeselect} aria-label="Deselect" title="Deselect (Esc)">
+              <CloseIcon size={16} />
+            </button>
           </>
         )}
       </div>
