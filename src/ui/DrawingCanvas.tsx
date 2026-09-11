@@ -2,21 +2,19 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { BRUSH_CATEGORIES, BRUSH_CATEGORY_LABELS, DEFAULT_BRUSHES, type BrushPreset } from '../core/brush';
 import { newDocument, newLayer } from '../core/document';
 import { clamp, hexToRgb, rgbToHex } from '../core/math';
+import { FORMAT_PRESETS, type FormatPreset } from '../core/projectPresets';
 import type { InputSample, RGB } from '../core/types';
 import { Engine } from '../gl/engine';
 import { Renderer } from '../gl/renderer';
 import './drawing.css';
 import { FloatingPanel } from './FloatingPanel';
-import { BucketIcon, LayersIcon, PencilIcon, RedoIcon, TrashIcon, UndoIcon } from './icons';
+import { BucketIcon, LayersIcon, NewProjectIcon, PencilIcon, RedoIcon, TrashIcon, UndoIcon } from './icons';
 import { LayersPanel } from './LayersPanel';
 import { Timeline } from './Timeline';
 import { usePalettes } from '../state/palettes';
 import { useTool } from '../state/tool';
 
-type PanelId = 'layers' | 'brush' | 'color';
-
-const DOC_WIDTH = 360;
-const DOC_HEIGHT = 640;
+type PanelId = 'layers' | 'brush' | 'color' | 'project';
 
 /** Tilt arrives in degrees; the brush engine wants radians — same
  *  conversion Trace's `ui/CanvasView.tsx` uses (`tiltToSpherical`). */
@@ -47,8 +45,19 @@ function tiltToSpherical(tiltX: number, tiltY: number) {
  * `tommyelgucci/draw` (Trace) already uses — see drawing.css's file
  * header for why this replaces task 2.12's docked-panel approach rather
  * than sitting alongside it.
+ *
+ * `preset`/`onNewProject` (task 2.15): the canvas format picker. This
+ * component only renders the picker and reports the choice upward —
+ * actually starting a fresh project means throwing away this whole
+ * component's canvas/Engine/Renderer and mounting a new one, which is
+ * simplest and safest done by having the parent change this component's
+ * `key` (a standard React remount, not something this component can do
+ * to itself): a brand-new `<canvas>` element gets its own isolated WebGL
+ * context for free, with no need to build a `Renderer.dispose()` this
+ * project has never needed before now. See `App.tsx` for the `key`/state
+ * that actually does the remounting.
  */
-export function DrawingCanvas() {
+export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { preset?: FormatPreset; onNewProject?: (preset: FormatPreset) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
   const [ready, setReady] = useState(false);
@@ -98,10 +107,17 @@ export function DrawingCanvas() {
   const gapCloseRef = useRef(gapClose);
   gapCloseRef.current = gapClose;
 
+  // `preset` is read once, at mount, on purpose: a size change is a brand
+  // new project, and the parent (`App.tsx`) already handles that by
+  // changing this whole component's `key` — a full remount with a fresh
+  // canvas/Engine — rather than this effect resizing the existing one in
+  // place. So this never needs to re-run when `preset` changes; it can't,
+  // by construction (a new `preset` value only ever arrives via a remount
+  // that recreates this effect's closure from scratch anyway).
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const doc = newDocument(DOC_WIDTH, DOC_HEIGHT, 12, 24);
+    const doc = newDocument(preset.width, preset.height, 12, 24);
     const ink = newLayer('Ink', true, 'draw');
     doc.layers.push(ink);
     let engine: Engine;
@@ -122,6 +138,7 @@ export function DrawingCanvas() {
       unsubscribeHistory();
       engineRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Keyboard shortcuts: Ctrl/Cmd+Z to undo, Shift+Ctrl/Cmd+Z (or Ctrl+Y)
@@ -230,8 +247,8 @@ export function DrawingCanvas() {
         ref={canvasRef}
         id="drawing-canvas"
         className="cl-canvas"
-        width={DOC_WIDTH}
-        height={DOC_HEIGHT}
+        width={preset.width}
+        height={preset.height}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={endStroke}
@@ -277,6 +294,14 @@ export function DrawingCanvas() {
       </div>
 
       <div className="cl-rail cl-rail--top">
+        {onNewProject && (
+          <>
+            <button className="cl-railbtn" aria-pressed={activePanel === 'project'} onClick={() => togglePanel('project')} aria-label="New project" title="New project">
+              <NewProjectIcon />
+            </button>
+            <span className="cl-rail-divider" />
+          </>
+        )}
         <button className="cl-railbtn cl-railbtn--danger" onClick={handleClear} aria-label="Clear" title="Clear layer">
           <TrashIcon />
         </button>
@@ -296,6 +321,28 @@ export function DrawingCanvas() {
       </div>
 
       {ready && engineRef.current && <Timeline engine={engineRef.current} />}
+
+      {activePanel === 'project' && onNewProject && (
+        <FloatingPanel title="New project" onClose={() => setActivePanel(null)}>
+          <p className="cl-section-title">Choose a format</p>
+          <div className="cl-chip-group">
+            <div className="cl-chip-row cl-chip-row--wrap">
+              {FORMAT_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  className="cl-chip"
+                  onClick={() => {
+                    onNewProject(p);
+                    setActivePanel(null);
+                  }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </FloatingPanel>
+      )}
 
       {activePanel === 'layers' && ready && engineRef.current && (
         <FloatingPanel title="Layers" onClose={() => setActivePanel(null)}>

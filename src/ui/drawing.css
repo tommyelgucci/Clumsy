@@ -399,6 +399,16 @@
   mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
 }
 
+/* A short, non-scrolling list (e.g. the 3 format presets) wraps onto
+   multiple lines instead of scrolling horizontally — no fade mask
+   needed since nothing gets cut off. */
+.cl-chip-row--wrap {
+  flex-wrap: wrap;
+  overflow-x: visible;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 .cl-chip {
   flex: none;
   background: var(--surface-2);

@@ -165,6 +165,16 @@ export function DuplicateFrameIcon({ size = 16 }: IconProps) {
   );
 }
 
+export function NewProjectIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>
+      <path d="M7 3h7l4 4v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
+      <path d="M14 3v4h4" />
+      <path d="M12 12v5M9.5 14.5h5" />
+    </svg>
+  );
+}
+
 export function OnionIcon({ size = 16 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>

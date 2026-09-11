@@ -1,5 +1,43 @@
 # Checkpoint — Progress log
 
+### 2026-09-11 — Task 2.15 (new): canvas format picker at project creation
+
+The other confirmed-but-unbuilt piece from the direction correction:
+`core/document.ts`'s `newDocument()` default (1080x1920) was flagged
+there as a leftover from the wrong TikTok-only assumption, with the
+owner's fix already decided — a preset picker at project creation
+(vertical 9:16 / horizontal 16:9 / square 1:1), not a single fixed
+default or free-form custom sizing, matching Procreate/ToonSquid/Clip
+Studio Paint's own convention. Picked up right after the timeline (task
+2.14) while continuing to advance everything not blocked on hardware.
+
+New `core/projectPresets.ts` holds the three presets, at the same modest
+360-pixel-scale resolution the app's one hardcoded default already used
+— explicitly NOT the production-resolution question (1080x1920 or
+otherwise), which is a separate, bigger decision about GPU memory and
+render cost nobody has made yet. `DrawingCanvas` gained optional
+`preset`/`onNewProject` props (defaulting to the same 360x640 every
+existing test already assumed, so first-load behavior is unchanged) and
+a "New project" panel. The actual project-switching logic lives in
+`App.tsx`, not `DrawingCanvas`: starting a new project throws away the
+whole canvas/Engine/Renderer and mounts a fresh one via a React `key`
+change, rather than trying to resize an existing Engine/Renderer in
+place — simpler and safer than building a `Renderer.dispose()`/reset
+path this project has never needed before. A separate `projectEpoch`
+counter (not just the preset value) makes sure picking the same preset
+twice in a row still resets the project.
+
+Verified via a new `scripts/new-project-smoke.mjs`: default project is
+still 360x640; drawing a stroke then switching to Horizontal 16:9 lands
+on a genuinely fresh 640x360 document (one layer, zero cels — not a
+resized copy); Square 1:1 lands on 480x480. Re-verified the full
+pre-existing 8-script Playwright suite with zero changes needed to any
+of them. 131 unit tests, `tsc`, `lint`, and `build` all clean.
+
+Still open: `core/document.ts`'s own `newDocument()` default (1080x1920)
+is untouched — this picker only controls what the UI passes into it, it
+doesn't change that function's own defaults.
+
 ### 2026-09-11 — Task 2.14 (new): timeline — frame navigation, add/duplicate/delete frame, onion skin, fps
 
 Follow-up to the direction correction below: once Clumsyloop was reframed

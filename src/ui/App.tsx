@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CameraCapture } from '../native/cameraCapture';
+import { FORMAT_PRESETS, type FormatPreset } from '../core/projectPresets';
 import { DrawingCanvas } from './DrawingCanvas';
 import { PersistenceHarness } from './PersistenceHarness';
 import { RendererHarness } from './RendererHarness';
@@ -8,6 +9,20 @@ export function App() {
   const [frames, setFrames] = useState<string[]>([]);
   const [locked, setLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Starting a new project means throwing away the whole canvas/Engine/
+  // Renderer and mounting a fresh one — see DrawingCanvas's own doc
+  // comment on `preset`/`onNewProject` for why that's a `key` change
+  // (a real React remount) rather than something DrawingCanvas resizes
+  // itself into. `preset` alone isn't enough of a key on its own: picking
+  // the SAME preset twice in a row (starting over on the same format)
+  // should still reset the project, so a separate counter tracks "which
+  // project" independently of "which format".
+  const [preset, setPreset] = useState<FormatPreset>(FORMAT_PRESETS[0]);
+  const [projectEpoch, setProjectEpoch] = useState(0);
+  const handleNewProject = (next: FormatPreset) => {
+    setPreset(next);
+    setProjectEpoch((e) => e + 1);
+  };
 
   async function handleLock() {
     setError(null);
@@ -42,7 +57,7 @@ export function App() {
 
   return (
     <div>
-      <DrawingCanvas />
+      <DrawingCanvas key={projectEpoch} preset={preset} onNewProject={handleNewProject} />
 
       {/* Manual test harnesses for tasks 1.2/1.3 (camera plugin skeleton),
           2.2 (renderer), and 2.5 (persistence) — collapsed by default so
