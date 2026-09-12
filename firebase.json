@@ -5,12 +5,21 @@
   "storage": {
     "rules": "storage.rules"
   },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default"
+    }
+  ],
   "emulators": {
     "firestore": {
       "port": 8080
     },
     "storage": {
       "port": 9199
+    },
+    "functions": {
+      "port": 5001
     }
   }
 }

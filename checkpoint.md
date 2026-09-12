@@ -1,5 +1,34 @@
 # Checkpoint — Progress log
 
+### 2026-09-12 — Task 5.2 (done): Cloud Function — report crosses threshold, hide the clip
+
+New `functions/` package: `firebase-admin`/`firebase-functions` as real
+dependencies, Node 20 target (the actual Cloud Functions runtime), its
+own `tsconfig.json`, and the same `register-ts-loader.mjs` trick the main
+app's `npm test` uses (copied in rather than imported across the package
+boundary, since `functions/` needs to stay self-contained and
+independently deployable).
+
+`functions/src/moderation.ts` holds the real decision — `REPORT_THRESHOLD
+= 1`, `shouldHideClip(reportCount)` — as plain, Firebase-free logic,
+testable with plain Node the same way this project's own `core/` modules
+are. `functions/src/index.ts` is a thin Firestore trigger wrapper: on a
+new `reports/{reportId}` document, counts existing reports for that
+report's `clipId`, and once the threshold's crossed, writes
+`clips/{clipId}.hidden = true` with Admin SDK privileges — the same
+field `firestore.rules` refuses to every client, by design.
+
+Genuinely attempted the fuller integration test too (a real Functions +
+Firestore emulator pair, creating an actual report doc and checking the
+clip gets hidden), not just the pure-logic unit tests — the emulator
+loads the function definition fine but fails registering the Firestore
+trigger with what looks like an emulator-suite/sandbox networking quirk
+(confirmed it isn't the usual proxy-blocks-egress explanation, since
+127.0.0.1/localhost are already exempted from this environment's egress
+policy). Documented rather than silently skipped, same honesty bar the
+camera plugin's "written but unverified on real hardware" notes already
+use elsewhere. 3 unit tests pass, `tsc`/build both clean.
+
 ### 2026-09-12 — Tasks 4.1/5.1 (schema half): clips + reports Firestore/Storage rules
 
 Owner asked to keep advancing everything that doesn't need them, ordered
