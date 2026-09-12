@@ -136,6 +136,85 @@ await page.keyboard.press('Escape');
 sel = await selectionState();
 check('selection is cleared', sel === null);
 
+console.log('\n— Selection-constrained painting (task 2.19): draw/bucket/clear only affect the masked area —');
+const P3 = { x: 250, y: 100 }; // reference ink, stays outside every selection below
+const P1 = { x: 100, y: 500 };
+const P2 = { x: 250, y: 500 }; // blank, stays outside the selection
+
+await page.getByRole('button', { name: 'Draw' }).click();
+await drag([[P3.x - 10, P3.y], [P3.x + 10, P3.y]]);
+await drag([[P1.x - 10, P1.y], [P1.x + 10, P1.y]]);
+check('P1 has ink (the dot the selection will wrap)', (await avgAtFrame(P1.x, P1.y)) < 200);
+check('P2 starts blank', (await avgAtFrame(P2.x, P2.y)) > 250);
+
+await page.getByRole('button', { name: 'Lasso' }).click();
+const p1Loop = [];
+for (let i = 0; i <= 16; i++) {
+  const a = (i / 16) * Math.PI * 2;
+  p1Loop.push([P1.x + 30 * Math.cos(a), P1.y + 30 * Math.sin(a)]);
+}
+await drag(p1Loop, { dwell: false });
+sel = await selectionState();
+check('a selection now wraps P1 but not P2', sel !== null && P1.x >= sel.rect.x && P1.x < sel.rect.x2 && !(P2.x >= sel.rect.x && P2.x < sel.rect.x2), JSON.stringify(sel?.rect));
+
+await page.getByRole('button', { name: 'Draw' }).click();
+await drag([[P2.x - 10, P2.y], [P2.x + 10, P2.y]]);
+check('a stroke attempted outside the selection leaves P2 blank', (await avgAtFrame(P2.x, P2.y)) > 250);
+
+const P1b = { x: P1.x + 15, y: P1.y };
+await drag([[P1b.x - 8, P1b.y], [P1b.x + 8, P1b.y]]);
+check('a stroke inside the selection still paints', (await avgAtFrame(P1b.x, P1b.y)) < 200);
+
+await page.getByRole('button', { name: 'Bucket' }).click();
+const p2Screen = toScreen(P2.x, P2.y);
+await page.mouse.move(p2Screen.x, p2Screen.y);
+await page.mouse.down();
+await page.mouse.up();
+await page.waitForTimeout(300); // the fill worker round trip is async — see bucket-smoke.mjs
+check('a bucket fill attempted outside the selection leaves P2 blank', (await avgAtFrame(P2.x, P2.y)) > 250);
+
+const P1c = { x: P1.x - 22, y: P1.y }; // far enough from P1's own dot ink not to overlap its sampling window
+check('P1c starts blank, inside the selection', (await avgAtFrame(P1c.x, P1c.y)) > 250);
+const p1cScreen = toScreen(P1c.x, P1c.y);
+await page.mouse.move(p1cScreen.x, p1cScreen.y);
+await page.mouse.down();
+await page.mouse.up();
+await page.waitForTimeout(300);
+check('a bucket fill inside the selection still fills', (await avgAtFrame(P1c.x, P1c.y)) < 200);
+
+await page.getByRole('button', { name: 'Clear' }).click();
+check('Clear only erases inside the selection — P1 is gone', (await avgAtFrame(P1.x, P1.y)) > 250);
+check('Clear leaves P3 (outside every selection here) untouched', (await avgAtFrame(P3.x, P3.y)) < 200);
+
+await page.keyboard.press('Escape');
+
+console.log('\n— Duplicate selection (task 2.20): copies pixels without cutting the original —');
+const P4 = { x: 100, y: 300 };
+await page.getByRole('button', { name: 'Draw' }).click();
+await drag([[P4.x - 10, P4.y], [P4.x + 10, P4.y]]);
+check('P4 has ink', (await avgAtFrame(P4.x, P4.y)) < 200);
+
+await page.getByRole('button', { name: 'Lasso' }).click();
+const p4Loop = [];
+for (let i = 0; i <= 16; i++) {
+  const a = (i / 16) * Math.PI * 2;
+  p4Loop.push([P4.x + 30 * Math.cos(a), P4.y + 30 * Math.sin(a)]);
+}
+await drag(p4Loop, { dwell: false });
+
+const P4dup = { x: P4.x + 24, y: P4.y + 24 };
+check('the duplicate destination starts blank', (await avgAtFrame(P4dup.x, P4dup.y)) > 250);
+await page.getByRole('button', { name: 'Duplicate selection' }).click();
+check('the original P4 ink is still there — duplicate does not cut', (await avgAtFrame(P4.x, P4.y)) < 200);
+check('a copy now exists at the offset destination', (await avgAtFrame(P4dup.x, P4dup.y)) < 200);
+
+await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+check('undo removes the duplicate', (await avgAtFrame(P4dup.x, P4dup.y)) > 250);
+check('undo leaves the original untouched', (await avgAtFrame(P4.x, P4.y)) < 200);
+
+await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+z' : 'Control+Shift+z');
+check('redo brings the duplicate back', (await avgAtFrame(P4dup.x, P4dup.y)) < 200);
+
 console.log(`\n${failures === 0 ? 'All checks passed.' : `${failures} check(s) FAILED.`}`);
 if (errors.length > 0) {
   console.log('\nConsole errors observed:');

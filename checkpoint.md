@@ -1,5 +1,51 @@
 # Checkpoint — Progress log
 
+### 2026-09-12 — Tasks 2.19/2.20 (done): selection-constrained painting, copy/duplicate
+
+Both explicit scope cuts named in task 2.17's own verify_note, picked up
+together since they touch the same lasso feature and test script.
+
+**2.19 — selection-constrained painting.** New private
+`Engine.clipToSelection(rect, before, after)`: given a dirty rect's
+pixels before and after some paint operation, reverts anything outside
+the current selection back to `before`. Applied after the fact to
+whatever `beginStroke`'s merges, `floodFill`, and `clearActiveLayer`
+already computed, rather than trying to constrain the paint operations
+themselves — simpler, and correct regardless of the operation's own
+math. `clearActiveLayer` gained a whole second branch for the selection
+case (clearing only the masked pixels, not the full cel).
+
+Building this surfaced a more interesting bug than a typo: a bucket
+fill's flood algorithm is connectivity-based, not spatially local like a
+stroke — clicking outside an active selection on a large connected
+blank-paper region could still flood color into the selection's own
+interior, since nothing walled off the mask boundary from the flood
+traversal itself. Clipping alone only controls which pixels may end up
+modified, not whether the fill should run at all — fixed by rejecting
+the whole attempt up front when the click itself falls outside the
+current selection. Strokes don't need the equivalent guard, since
+they're spatially local and per-pixel clipping alone already produces
+the right result. Caught via a Playwright check reading actual pixel
+values at a point placed away from existing ink but still inside the
+selection, after a separate outside-fill attempt had already run.
+
+**2.20 — copy/duplicate a selection.** New `Engine.duplicateSelection`:
+copies (not cuts) the selection's masked pixels, pastes them at a small
+fixed offset via `drawOver`, and moves the selection to wrap the new
+copy so the existing move gesture can carry it further. A visible
+offset rather than an exact overlap, since an overlap would be
+indistinguishable from a no-op to both the user and a pixel-reading
+test. New rail button (reusing the timeline's duplicate-frame icon) plus
+a Ctrl/Cmd+D shortcut.
+
+Both verified by extending `scripts/lasso-smoke.mjs` rather than new
+scripts. Full 11-script Playwright suite, 138 unit tests, `tsc`, `lint`,
+and `build` all clean.
+
+Still open, real follow-ups: no resize/rotate of a selection or its
+duplicate, and a moved/duplicated selection still can't be dragged
+partially off-canvas.
+
 ### 2026-09-12 — Task 2.18 (done): easing curve editing for keyframes
 
 Named as a real gap in task 2.16's own verify_note: every keyframe

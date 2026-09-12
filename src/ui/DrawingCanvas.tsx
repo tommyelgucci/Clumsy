@@ -8,7 +8,7 @@ import { Engine } from '../gl/engine';
 import { Renderer } from '../gl/renderer';
 import './drawing.css';
 import { FloatingPanel } from './FloatingPanel';
-import { BucketIcon, CloseIcon, LassoIcon, LayersIcon, NewProjectIcon, PencilIcon, RedoIcon, TransformIcon, TrashIcon, UndoIcon } from './icons';
+import { BucketIcon, CloseIcon, DuplicateFrameIcon, LassoIcon, LayersIcon, NewProjectIcon, PencilIcon, RedoIcon, TransformIcon, TrashIcon, UndoIcon } from './icons';
 import { LayersPanel } from './LayersPanel';
 import { Timeline } from './Timeline';
 import { TransformPanel } from './TransformPanel';
@@ -173,6 +173,10 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
       } else if (e.key.toLowerCase() === 'y') {
         e.preventDefault();
         engineRef.current?.redo();
+      } else if (e.key.toLowerCase() === 'd' && engineRef.current?.selection) {
+        e.preventDefault();
+        engineRef.current.duplicateSelection();
+        forceSelectionUpdate((v) => v + 1);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -298,6 +302,11 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
     forceSelectionUpdate((v) => v + 1);
   };
 
+  const handleDuplicateSelection = () => {
+    engineRef.current?.duplicateSelection();
+    forceSelectionUpdate((v) => v + 1);
+  };
+
   const handleClear = () => {
     engineRef.current?.clearActiveLayer();
   };
@@ -376,6 +385,9 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
         {mode === 'lasso' && engineRef.current?.selection && (
           <>
             <span className="cl-rail-divider" />
+            <button className="cl-railbtn" onClick={handleDuplicateSelection} aria-label="Duplicate selection" title="Duplicate (Ctrl/Cmd+D)">
+              <DuplicateFrameIcon size={16} />
+            </button>
             <button className="cl-railbtn" onClick={handleDeselect} aria-label="Deselect" title="Deselect (Esc)">
               <CloseIcon size={16} />
             </button>

@@ -92,14 +92,25 @@
  * `renderDocumentFrame`'s single `wetOverlay` param — a stroke and a
  * selection move can never be in progress at the same time, since they're
  * different tool modes, so there's never a real conflict over that one
- * slot). Scoped deliberately narrow for this first pass: a selection only
- * affects the lasso tool's own move gesture — switching to Draw/Bucket
- * with a selection still active does NOT constrain painting to it, no
- * copy/duplicate (only move), no resize/rotate of the floating piece, and
- * a moved selection can't be dragged partially off-canvas (clamped fully
- * on-screen instead of clipping a partially-offscreen floating rect,
- * which `writeRect` isn't built to do safely). Real follow-ups, not
- * oversights — see checkpoint.md.
+ * slot). Scoped deliberately narrow for that first pass: no copy/
+ * duplicate (only move — see `duplicateSelection` below, added in task
+ * 2.20), no resize/rotate of the floating piece, and a moved selection
+ * can't be dragged partially off-canvas (clamped fully on-screen instead
+ * of clipping a partially-offscreen floating rect, which `writeRect`
+ * isn't built to do safely). Real follow-ups, not oversights — see
+ * checkpoint.md.
+ *
+ * Selection-constrained painting (task 2.19): `clipToSelection` is the
+ * one mechanism behind all of it — given a dirty rect's pixels before
+ * and after some paint operation, it reverts anything outside the
+ * current selection back to what it was. `beginStroke`'s wet and erase
+ * merges, `floodFill`'s result, and `clearActiveLayer` all run their
+ * already-computed "after" through it before writing/recording anything,
+ * rather than trying to constrain the paint operations themselves
+ * (stamping, flood-filling) to the mask's shape directly — simpler, and
+ * correct regardless of how complex the operation's own math is, since
+ * it works entirely after the fact on the same dirty-rect buffers this
+ * engine's undo system was already reading and writing.
  */
 import { History, type Command } from '../core/history';
 import { StrokeBuilder, type BrushPreset } from '../core/brush';
@@ -673,6 +684,81 @@ export class Engine {
     this.renderAndPresent();
   }
 
+  /** Duplicates the selection's pixels a short, fixed offset away from
+   *  where they are now (task 2.20) — pasted with `drawOver` so
+   *  whatever's already at the destination outside the mask survives,
+   *  same as a move's own paste step. Unlike a move, the ORIGINAL
+   *  pixels are left completely untouched (no cut): this is a genuine
+   *  copy, not a relocation. The selection itself moves to wrap the new
+   *  copy, ready to be dragged further with the normal move gesture — a
+   *  fixed offset (clamped fully on-canvas, same as a move) rather than
+   *  pasting directly on top of the original, so the result is
+   *  immediately visible instead of an exact, invisible overlap the
+   *  user would have to move away first just to see it happened at
+   *  all. No-op without a selection, a cel to copy from, a layer able
+   *  to receive it (locked/hidden/non-draw), or if nothing inside the
+   *  mask has any ink to duplicate in the first place. */
+  duplicateSelection(offset = 24) {
+    if (!this.selection) return;
+    const layer = this.activeLayer;
+    if (layer.locked || !layer.visible || layer.kind !== 'draw') return;
+    const cel = celAt(layer, this._currentFrame);
+    if (!cel) return;
+    const { rect, mask } = this.selection;
+    const w = rect.x2 - rect.x;
+    const h = rect.y2 - rect.y;
+    if (w <= 0 || h <= 0) return;
+
+    const original = this.renderer.readRect(cel.surface, rect.x, rect.y, w, h);
+    const copy = new Uint8Array(original.length);
+    let hasInk = false;
+    for (let i = 0; i < mask.length; i++) {
+      if (!mask[i]) continue;
+      const o = i * 4;
+      copy[o] = original[o];
+      copy[o + 1] = original[o + 1];
+      copy[o + 2] = original[o + 2];
+      copy[o + 3] = original[o + 3];
+      if (original[o + 3] !== 0) hasInk = true;
+    }
+    if (!hasInk) return;
+
+    const nx = clamp(rect.x + offset, 0, Math.max(0, this.doc.width - w));
+    const ny = clamp(rect.y + offset, 0, Math.max(0, this.doc.height - h));
+    const dx = nx - rect.x;
+    const dy = ny - rect.y;
+
+    const destBefore = this.renderer.readRect(cel.surface, nx, ny, w, h);
+    const stamp = this.renderer.scratch('selectionFloat');
+    this.renderer.clear(stamp);
+    this.renderer.writeRect(stamp, nx, ny, w, h, copy);
+    this.renderer.drawOver(cel.surface, stamp, 1);
+    this.renderer.clear(stamp);
+    const destAfter = this.renderer.readRect(cel.surface, nx, ny, w, h);
+
+    const oldSelection = this.selection;
+    const newSelection: Selection = {
+      rect: { x: nx, y: ny, x2: nx + w, y2: ny + h },
+      mask,
+      points: oldSelection.points.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+    };
+    this.selection = newSelection;
+
+    this.history.push({
+      label: 'Duplicate selection',
+      cost: destBefore.byteLength + destAfter.byteLength,
+      redo: () => {
+        this.renderer.writeRect(cel.surface, nx, ny, w, h, destAfter);
+        this.selection = newSelection;
+      },
+      undo: () => {
+        this.renderer.writeRect(cel.surface, nx, ny, w, h, destBefore);
+        this.selection = oldSelection;
+      },
+    });
+    this.renderAndPresent();
+  }
+
   /** The active layer's cel held at `frame` (defaults to the current
    *  playhead), creating one if none exists yet. `celAt` finds the most
    *  recently *started* cel at or before `frame`, not one at that exact
@@ -768,7 +854,13 @@ export class Engine {
       // the erase path below still can't do this).
       const before = this.renderer.readRect(cel.surface, rect.x, rect.y, rectW, rectH);
       this.renderer.drawOver(cel.surface, this.renderer.scratch('wetStroke'));
-      const after = this.renderer.readRect(cel.surface, rect.x, rect.y, rectW, rectH);
+      let after = this.renderer.readRect(cel.surface, rect.x, rect.y, rectW, rectH);
+      after = this.clipToSelection(rect, before, after);
+      // The merge above already wrote the UNCLIPPED result; if a
+      // selection actually reverted anything, the surface needs
+      // correcting to match — `clipToSelection` only computes a buffer,
+      // it doesn't write anywhere itself.
+      if (this.selection) this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, after);
 
       // `push`, not `run`: the merge already happened, just above.
       this.history.push({
@@ -805,7 +897,12 @@ export class Engine {
     const rectW = rect.x2 - rect.x;
     const rectH = rect.y2 - rect.y;
     const before = extractRect(fullBefore, this.doc.width, rect);
-    const after = this.renderer.readRect(cel.surface, rect.x, rect.y, rectW, rectH);
+    let after = this.renderer.readRect(cel.surface, rect.x, rect.y, rectW, rectH);
+    after = this.clipToSelection(rect, before, after);
+    // Erase stamps already went straight onto the permanent cel (see
+    // file header); if a selection reverted any of that, the surface
+    // needs correcting the same way the wet path above does.
+    if (this.selection) this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, after);
 
     this.history.push({
       label,
@@ -846,13 +943,74 @@ export class Engine {
     return undefined;
   }
 
+  /** The actual mechanism behind selection-constrained painting (task
+   *  2.19): given a dirty rect's pixels before and after some paint
+   *  operation (a stroke merge, a fill, a clear), reverts any pixel
+   *  outside the current selection back to its `before` value — so
+   *  whatever the operation computed only actually lands where the
+   *  selection allows it to. Returns `after` completely unchanged if
+   *  there's no selection at all (the common case), so every existing
+   *  caller's behavior is identical to before this task whenever nothing
+   *  is selected. CPU-side, same as the rest of this engine's undo/fill
+   *  plumbing — the dirty rects here are the same modest size those
+   *  already work with, not the whole document.
+   *
+   *  Only reachable through `draw`/`bucket`'s own mutators, not the
+   *  lasso tool's own move — that already fills a specific need to
+   *  temporarily paint OUTSIDE the mask (a selection dragged to a new
+   *  spot updates the mask's own position first, in `endMoveSelection`,
+   *  precisely so this clip doesn't fight the move it belongs to). */
+  private clipToSelection(rect: Rect, before: Uint8Array, after: Uint8Array): Uint8Array {
+    const sel = this.selection;
+    if (!sel) return after;
+    const w = rect.x2 - rect.x;
+    const h = rect.y2 - rect.y;
+    const clipped = after.slice();
+    for (let y = 0; y < h; y++) {
+      const docY = rect.y + y;
+      for (let x = 0; x < w; x++) {
+        if (maskContains(sel.mask, sel.rect, rect.x + x, docY)) continue;
+        const o = (y * w + x) * 4;
+        clipped[o] = before[o];
+        clipped[o + 1] = before[o + 1];
+        clipped[o + 2] = before[o + 2];
+        clipped[o + 3] = before[o + 3];
+      }
+    }
+    return clipped;
+  }
+
   /** Clears the active layer's cel, undoably. A no-op (no history entry)
    *  on a layer with nothing to clear — clicking Clear on a blank layer
-   *  shouldn't leave a phantom empty cel behind for undo to trip over. */
+   *  shouldn't leave a phantom empty cel behind for undo to trip over.
+   *  Constrained to the current selection if one exists (task 2.19):
+   *  only the masked pixels are cleared, everything else on the layer
+   *  is untouched, matching how a selection scopes every other paint
+   *  operation. */
   clearActiveLayer() {
     const layer = this.activeLayer;
     const cel = celAt(layer, this._currentFrame);
     if (!cel || cel.surface.empty) return;
+
+    if (this.selection) {
+      const { rect } = this.selection;
+      const rectW = rect.x2 - rect.x;
+      const rectH = rect.y2 - rect.y;
+      if (rectW <= 0 || rectH <= 0) return;
+      const before = this.renderer.readRect(cel.surface, rect.x, rect.y, rectW, rectH);
+      const after = this.clipToSelection(rect, before, new Uint8Array(before.length));
+      if (uint8ArraysEqual(before, after)) return;
+      this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, after);
+      this.history.push({
+        label: 'Clear',
+        cost: before.byteLength + after.byteLength,
+        redo: () => this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, after),
+        undo: () => this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, before),
+      });
+      this.renderAndPresent();
+      return;
+    }
+
     const w = this.doc.width;
     const h = this.doc.height;
     const before = this.renderer.readRect(cel.surface, 0, 0, w, h);
@@ -947,6 +1105,16 @@ export class Engine {
     const sx = Math.floor(x);
     const sy = Math.floor(y);
     if (sx < 0 || sy < 0 || sx >= w || sy >= h) return;
+    // Unlike a stroke, a fill isn't spatially local — it's connectivity-
+    // based, so a click outside a selection could otherwise still flood
+    // color into the selection's own interior through an unbroken
+    // connected region (blank paper reaching from outside all the way
+    // in, say), even though `clipToSelection` below correctly stops the
+    // color from surviving OUTSIDE the mask. Rejecting the whole
+    // attempt up front when the click itself falls outside the current
+    // selection matches how a selection scopes the tool everywhere
+    // else: nothing happens at all, not "only the allowed part happens".
+    if (this.selection && !this.selectionContains(x, y)) return;
     // Captured once, up front: this fill is asynchronous (the worker
     // round trip below), so the timeline could in principle move on
     // before it resolves — the fill must still land on the frame it was
@@ -966,13 +1134,17 @@ export class Engine {
     const rectW = rect.x2 - rect.x;
     const rectH = rect.y2 - rect.y;
     const before = extractRect(targetSnapshot, w, rect);
+    // A tap outside the current selection fills nothing at all: every
+    // pixel `sub` computed reverts back to `before`, since none of it
+    // falls inside the mask.
+    const after = this.clipToSelection(rect, before, sub);
 
     const cmd: Command = {
       label: 'Fill',
-      cost: sub.byteLength + before.byteLength,
+      cost: after.byteLength + before.byteLength,
       redo: () => {
         if (created) layer.cels.set(frame, cel);
-        this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, sub);
+        this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, after);
       },
       undo: () => {
         this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, before);
@@ -1021,4 +1193,14 @@ export class Engine {
     this._revision++;
     for (const fn of this.revisionListeners) fn();
   }
+}
+
+/** Byte-for-byte comparison — used only to skip recording a no-op undo
+ *  step (e.g. `clearActiveLayer` on a selection with nothing inside it). */
+function uint8ArraysEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
