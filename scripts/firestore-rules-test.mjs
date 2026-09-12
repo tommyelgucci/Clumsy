@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 
 // Verifies firestore.rules (task 3.2) against the local Firestore
 // emulator — no real Firebase project needed, since `.firebaserc`'s
@@ -54,6 +54,8 @@ await testEnv.withSecurityRulesDisabled(async (context) => {
   await setDoc(doc(db, 'projects/alice-project'), { ownerId: 'alice', name: 'Alice clip' });
   await setDoc(doc(db, 'entitlements/alice'), { active: true, productId: 'pro_yearly' });
   await setDoc(doc(db, 'users/alice'), { displayName: 'Alice' });
+  await setDoc(doc(db, 'clips/alice-clip'), { ownerId: 'alice', videoUrl: 'https://example.invalid/alice-clip.mp4', hidden: false, createdAt: 1 });
+  await setDoc(doc(db, 'clips/alice-hidden-clip'), { ownerId: 'alice', videoUrl: 'https://example.invalid/hidden.mp4', hidden: true, createdAt: 2 });
 });
 
 const alice = testEnv.authenticatedContext('alice');
@@ -81,6 +83,23 @@ await expectAllowed('the owner can read their own entitlement', getDoc(doc(alice
 await expectDenied("a different user cannot read alice's entitlement", getDoc(doc(bob.firestore(), 'entitlements/alice')));
 await expectDenied('the owner cannot write their own entitlement — only a Cloud Function can', setDoc(doc(alice.firestore(), 'entitlements/alice'), { active: true, productId: 'free_forever' }));
 await expectDenied('an unauthenticated client cannot create an entitlement', setDoc(doc(anon.firestore(), 'entitlements/carol'), { active: true }));
+
+console.log('\n— clips/{clipId}: public read unless hidden (the owner can still see their own); owner-only create/delete —');
+await expectAllowed('anyone can read a non-hidden clip', getDoc(doc(anon.firestore(), 'clips/alice-clip')));
+await expectDenied("a different user cannot read alice's hidden clip", getDoc(doc(bob.firestore(), 'clips/alice-hidden-clip')));
+await expectAllowed('the owner can still read their own hidden clip', getDoc(doc(alice.firestore(), 'clips/alice-hidden-clip')));
+await expectAllowed('a user can publish a clip with themselves as owner', setDoc(doc(alice.firestore(), 'clips/second-alice-clip'), { ownerId: 'alice', videoUrl: 'https://example.invalid/x.mp4', hidden: false, createdAt: 3 }));
+await expectDenied('a user cannot publish a clip owned by someone else', setDoc(doc(bob.firestore(), 'clips/spoofed-clip'), { ownerId: 'alice', videoUrl: 'https://example.invalid/x.mp4', hidden: false, createdAt: 3 }));
+await expectDenied('a client cannot publish a clip already marked hidden', setDoc(doc(alice.firestore(), 'clips/preemptively-hidden'), { ownerId: 'alice', videoUrl: 'https://example.invalid/x.mp4', hidden: true, createdAt: 3 }));
+await expectDenied('the owner cannot update their own clip — not even to un-hide it', updateDoc(doc(alice.firestore(), 'clips/alice-hidden-clip'), { hidden: false }));
+await expectDenied("a different user cannot delete alice's clip", deleteDoc(doc(bob.firestore(), 'clips/alice-clip')));
+await expectAllowed('the owner can delete their own clip', deleteDoc(doc(alice.firestore(), 'clips/second-alice-clip')));
+
+console.log('\n— reports/{reportId}: write-only from the client, reporterId cannot be spoofed —');
+await expectAllowed('an authenticated user can report a clip as themselves', addDoc(collection(bob.firestore(), 'reports'), { reporterId: 'bob', clipId: 'alice-clip', reason: 'spam', createdAt: 4 }));
+await expectDenied('a user cannot file a report attributed to someone else', addDoc(collection(bob.firestore(), 'reports'), { reporterId: 'alice', clipId: 'alice-clip', reason: 'spam', createdAt: 4 }));
+await expectDenied('an unauthenticated client cannot file a report', addDoc(collection(anon.firestore(), 'reports'), { reporterId: 'anon', clipId: 'alice-clip', reason: 'spam', createdAt: 4 }));
+await expectDenied('no client, not even the reporter, can read reports back', getDoc(doc(bob.firestore(), 'reports/anything')));
 
 await testEnv.cleanup();
 

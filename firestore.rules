@@ -1,9 +1,14 @@
-// Firestore security rules (task 3.2). Scoped to exactly what CLAUDE.md's
-// Backend section and task 3.2 itself call for at this stage: users,
-// projects, and entitlements. The clips/reports collections described in
-// phases 4 and 5 (the public feed, moderation) aren't itemized as their
-// own tasks yet — adding rules for them here would be scope creep ahead
-// of a task that doesn't exist, so they're deliberately left out.
+// Firestore security rules. Task 3.2 originally scoped this to users/
+// projects/entitlements only, on the reasoning that clips/reports (phases
+// 4-5) weren't itemized tasks yet. They are now (4.1's schema half,
+// 5.1) — added here for the same reason 3.2 itself was built ahead of
+// its own nominal dependency (3.1, a real Firebase project + device):
+// the RULES are fully testable against the local emulator with no
+// client UI at all, even though the UI that would actually create these
+// documents (the feed, a report button) is still pending, most of it
+// gated on export (2.4) existing first, which is gated on the still-
+// device-blocked camera plugin. See tasks.json's 4.1/5.1 verify_notes
+// for exactly what this covers and what's still open.
 rules_version = '2';
 
 service cloud.firestore {
@@ -41,6 +46,48 @@ service cloud.firestore {
     match /entitlements/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow write: if false;
+    }
+
+    // A published clip (task 4.1's schema half). `hidden` is the
+    // moderation flag task 5.2's Cloud Function sets once a clip crosses
+    // the report threshold — Cloud Functions run with Admin SDK
+    // privileges that bypass these rules entirely, so the client-facing
+    // rule can and must refuse to ever let a client set it, matching how
+    // `entitlements` above refuses all client writes for the same
+    // "only a trusted server-side process decides this" reason.
+    match /clips/{clipId} {
+      // The feed only ever shows non-hidden clips to the public, but an
+      // owner can still see their own even after it's hidden — so they
+      // at least know it was taken down, rather than it silently
+      // vanishing with no trace from their own perspective.
+      allow read: if resource.data.hidden != true || (request.auth != null && request.auth.uid == resource.data.ownerId);
+      // A client can only ever publish a clip as not-yet-hidden — hidden
+      // is exclusively the moderation Cloud Function's to set.
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.ownerId && request.resource.data.hidden == false;
+      // No client update at all, not even the owner's — there's nothing
+      // in v1 scope a client should be able to change about a published
+      // clip (no caption editing, no un-hiding their own moderated
+      // clip). The owner can still remove it entirely, though: a
+      // genuine "take this down myself" action, same as `projects`.
+      allow update: if false;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.ownerId;
+    }
+
+    // A report against a clip (task 5.1). Deliberately write-only from
+    // the client's side: reads only ever happen through the moderation
+    // Cloud Function (task 5.2) and the internal review panel (task
+    // 5.3), both trusted server-side/Admin-SDK paths that bypass these
+    // rules entirely — a client has no legitimate reason to read anyone
+    // else's reports, or even its own (there's no "my reports" screen in
+    // v1 scope).
+    match /reports/{reportId} {
+      allow read: if false;
+      // `reporterId` must match the caller, the same anti-spoofing check
+      // `projects`' create rule already uses for `ownerId` — otherwise
+      // one user could file a report that falsely attributes itself to
+      // someone else.
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.reporterId;
+      allow update, delete: if false;
     }
   }
 }

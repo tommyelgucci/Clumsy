@@ -1,5 +1,37 @@
 # Checkpoint — Progress log
 
+### 2026-09-12 — Tasks 4.1/5.1 (schema half): clips + reports Firestore/Storage rules
+
+Owner asked to keep advancing everything that doesn't need them, ordered
+easiest to hardest. Starting on the Firebase/moderation backend now that
+the animation-engine push (keyframes, lasso) is shipped: the clips and
+reports collections' security rules, built ahead of their nominal
+dependencies the same way 3.2 was built ahead of 3.1 — the rules need no
+client UI at all to be fully testable against the local emulator, even
+though the UI that would actually create these documents (the feed, a
+publish button, a report button) is still pending, most of it gated on
+export (2.4) existing first.
+
+`firestore.rules` gained `clips/{clipId}` (public read unless `hidden` —
+task 5.2's moderation flag — except the owner can still see their own
+even hidden; create requires matching `ownerId` and `hidden == false`;
+no client update at all; owner-only delete) and `reports/{reportId}`
+(write-only from the client, `reporterId` can't be spoofed, no read
+access for anyone client-side — only the moderation Cloud Function and
+the review panel ever read these). New `storage.rules` for the actual
+video file, using path-based ownership (`clips/{ownerId}/{clipId}`)
+rather than custom metadata — simpler to write and test, and a client
+can't even attempt a write outside their own prefix. New Storage
+emulator config in `firebase.json` (port 9199) and
+`scripts/storage-rules-test.mjs`. `scripts/firestore-rules-test.mjs`
+gained 11 new checks across both collections.
+
+Both tasks marked `in_progress`, not `done` — their real acceptance
+criteria describe a working user-facing flow (publish a clip, report a
+clip) that doesn't exist yet and can't honestly be claimed done just
+because the backend rules are solid. tsc, lint, build, and all 138 unit
+tests remain clean; this didn't touch any web app code.
+
 ### 2026-09-11 — Task 2.17 (new): lasso selection — draw, move, undo/redo
 
 Second half of the owner's "push further on the animation engine

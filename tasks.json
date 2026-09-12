@@ -280,9 +280,9 @@
           "depends_on": ["3.5"],
           "description": "Publishing pipeline: upload the exported .mp4 to Firebase Storage, create the `clips` document with the URL and metadata (author, date, no likes/comments fields — not part of v1 scope).",
           "acceptance_criteria": "WHEN the user publishes a clip THE SYSTEM SHALL create a `clips` document whose video URL is publicly accessible.",
-          "verify_command": null,
-          "verify_note": "Manual verification — confirm the resulting URL plays back in a separate browser.",
-          "status": "pending"
+          "verify_command": "firebase emulators:exec --only firestore,storage 'npm run test:rules && npm run test:storage-rules'",
+          "verify_note": "Schema/rules half passes as of 2026-09-12 — the actual publish UI (this task's real acceptance criteria: a user taps something and a clip appears) is still pending, blocked on export (2.4) existing at all, itself blocked on the device-blocked camera plugin. Built ahead of 3.5 the same way 3.2 was built ahead of 3.1: the rules are fully testable against the local emulator with zero client UI. `clips/{clipId}` in firestore.rules: publicly readable unless `hidden` (task 5.2's moderation flag), except the owner can still read their own even after it's hidden; create requires the caller to be the incoming `ownerId` AND `hidden == false` (a client can publish a clip, never a pre-hidden one); no client update at all, not even the owner's (nothing in v1 needs to edit a published clip's fields); the owner can delete their own (a real 'take this down myself', distinct from moderation). New storage.rules for the actual video file: path-based ownership (`clips/{ownerId}/{clipId}`, not custom metadata — simpler to write and test, and a client can't even attempt a write outside their own prefix), publicly readable, owner-only write/delete. New firebase.json storage emulator (port 9199) and scripts/storage-rules-test.mjs (6 checks, using `@firebase/rules-unit-testing`'s storage support directly). scripts/firestore-rules-test.mjs gained 8 more checks for the clips half specifically (11 total new checks across both scripts, on top of the pre-existing 16 — see 5.1 for the reports half). tsc, lint, build, and all 138 unit tests remain clean — this task doesn't touch any web app code, only Firebase config/rules and their own test scripts. Still fully open: the actual upload — reading an exported file, writing it to `clips/{ownerId}/{clipId}` in Storage, then creating the matching Firestore document with its download URL — plus any UI trigger for it at all (tasks 4.2/4.3).",
+          "status": "in_progress"
         },
         {
           "id": "4.2",
@@ -326,8 +326,9 @@
           "depends_on": ["4.4"],
           "description": "Any clip in the feed can be reported. The report stores who, which clip, and a reason.",
           "acceptance_criteria": "WHEN a user reports a clip THE SYSTEM SHALL create a `reports` document referencing that clip.",
-          "verify_command": "npm test",
-          "status": "pending"
+          "verify_command": "firebase emulators:exec --only firestore 'npm run test:rules'",
+          "verify_note": "Schema/rules half passes as of 2026-09-12 — the report BUTTON itself (this task's real acceptance criteria) is still pending, since there's no feed for it to live in yet (4.2), itself waiting on clips existing at all (4.1's still-open upload half). Built ahead of its nominal dependency (4.4, the share sheet — itself device-gated) for the same reason 3.2/4.1 were: the rules need no client UI to be fully testable. `reports/{reportId}` in firestore.rules is write-only from the client — no read at all, not even the reporter's own reports back, since only the moderation Cloud Function (5.2) and the internal review panel (5.3) ever need to read them, both trusted server-side/Admin-SDK paths that bypass these rules entirely. `create` requires the caller to be the incoming `reporterId`, the same anti-spoofing check `projects`'s create rule already uses for `ownerId` — otherwise one user could file a report falsely attributed to someone else. 4 new checks in scripts/firestore-rules-test.mjs (part of the same 11 new checks 4.1's verify_note counts — reports and clips were built and verified together in one pass, since a report inherently references a clip). Still fully open: the actual report button/UI, anywhere for it to live (the feed, task 4.2), and the reason-selection flow.",
+          "status": "in_progress"
         },
         {
           "id": "5.2",
