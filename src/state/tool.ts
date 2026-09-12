@@ -12,7 +12,7 @@ import { create } from 'zustand';
 import { DEFAULT_BRUSHES } from '../core/brush';
 import type { RGB } from '../core/types';
 
-export type ToolMode = 'draw' | 'bucket' | 'lasso';
+export type ToolMode = 'draw' | 'bucket' | 'lasso' | 'gizmo';
 
 interface ToolState {
   mode: ToolMode;

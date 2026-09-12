@@ -1,5 +1,59 @@
 # Checkpoint — Progress log
 
+### 2026-09-12 — Task 2.21 (done): canvas transform gizmo
+
+Closes the easier half of the pair named as remaining after 2.20 — drag
+a layer directly on the canvas (move/scale/rotate) instead of only
+through the Transform panel's sliders.
+
+Needed no new engine surface: `getLayerTransformValue`/
+`snapshotLayerTransform`/`previewLayerTransformValue`/
+`commitLayerTransform` (task 2.16) already generalize over any of the
+five transform properties, so the gizmo drives the exact same four
+methods a slider drag does, just computing its deltas from pointer
+position instead of an `<input type=range>`'s value — same
+begin/commit-a-whole-gesture split, one undo step per property per
+gesture. All new code lives in `DrawingCanvas.tsx`: a `gizmoGeometry`
+helper computes the layer's transformed box corners and handle
+positions in document space with the same `mat3FromTRS`-style math
+`gl/renderer.ts` already uses to place the layer — applied to the
+document rect's corners instead of its pixels, kept UI-side since it's
+pure display/hit-test geometry with nothing for the engine's document
+model to own.
+
+A new `'gizmo'` tool mode (rail button labeled "Move layer" — "Transform"
+was already the Transform panel's own toggle button, and two buttons
+sharing that accessible name would be ambiguous both to a user and to
+Playwright's name matching) picks one of three gestures at pointerdown,
+in priority order: the rotate handle (a fixed doc-space offset above the
+box's top-center, moving with the box) first, then any corner (uniform
+scale only — `TransformTrack` has a single `scale` channel, so all four
+corners behave identically and just need distance-from-center, which is
+rotation-invariant), then a point-in-quad test for a plain move. A click
+that misses the box entirely is a genuine no-op — no new gesture starts,
+unlike the lasso tool's "outside starts a new selection" behavior. Scale
+comes from the ratio of the pointer's current distance from the box's
+center to its distance at grab; rotation from the change in angle
+around that same center.
+
+Verified with a new `scripts/gizmo-smoke.mjs` (a new script, not a
+lasso-smoke.mjs extension — different tool mode, different geometry):
+drags inside the box (checks both the committed x/y values and that the
+ink visibly moved), drags a corner (checks the resulting scale against
+the exact drag ratio), drags the rotate handle (checks the resulting
+rotation against the exact drag angle), confirms undo unwinds the four
+separate commits (move-x, move-y, scale, rotate) one at a time and redo
+replays all four, and confirms a drag starting outside a deliberately
+shrunk box changes nothing. Re-verified the full pre-existing 12-script
+Playwright suite (now 13) with no changes needed elsewhere. 138 unit
+tests, `tsc`, `lint`, and `build` all clean.
+
+Still open: resize/rotate of a floating lasso selection/duplicate has no
+gizmo of its own yet — that piece still only supports a plain translate.
+That, plus Feed UI and the review panel (both need real Firebase Auth
+wired into the client for the first time), are what's left on the
+easiest-to-hardest pass.
+
 ### 2026-09-12 — Tasks 2.19/2.20 (done): selection-constrained painting, copy/duplicate
 
 Both explicit scope cuts named in task 2.17's own verify_note, picked up
