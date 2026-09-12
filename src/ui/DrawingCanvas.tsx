@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { BRUSH_CATEGORIES, BRUSH_CATEGORY_LABELS, DEFAULT_BRUSHES, type BrushPreset } from '../core/brush';
 import { newDocument, newLayer } from '../core/document';
-import { clamp, hexToRgb, rgbToHex } from '../core/math';
+import { clamp, hexToRgb, mat3Apply, mat3FromTRS, rgbToHex } from '../core/math';
 import { FORMAT_PRESETS, type FormatPreset } from '../core/projectPresets';
-import type { InputSample, RGB } from '../core/types';
+import type { DocPoint, InputSample, RGB } from '../core/types';
 import { Engine } from '../gl/engine';
 import { Renderer } from '../gl/renderer';
 import './drawing.css';
@@ -28,6 +28,86 @@ function tiltToSpherical(tiltX: number, tiltY: number) {
   const azimuth = Math.atan2(tanY, tanX);
   return { altitude, azimuth };
 }
+
+/** The active layer's box + handles for the canvas transform gizmo (task
+ *  2.21), in document space — the exact same `mat3FromTRS` math
+ *  `gl/renderer.ts`'s `rasterizeLayer` uses to place the transformed
+ *  layer, applied here to the document rect's corners instead of its
+ *  pixels, purely for display/hit-testing. Uniform scale only (matches
+ *  `TransformTrack`'s single `scale` channel — no independent X/Y scale
+ *  to give a corner handle its own axis), so all four corners behave
+ *  identically as scale handles; only the top edge's midpoint gets the
+ *  extra handle offset above it for rotation. */
+function gizmoGeometry(engine: Engine) {
+  const w = engine.doc.width;
+  const h = engine.doc.height;
+  const cx = w / 2;
+  const cy = h / 2;
+  const tx = engine.getLayerTransformValue('x');
+  const ty = engine.getLayerTransformValue('y');
+  const scale = engine.getLayerTransformValue('scale');
+  const rotation = engine.getLayerTransformValue('rotation');
+  const m = mat3FromTRS(tx, ty, rotation, scale, scale, cx, cy);
+  const corners = [
+    mat3Apply(m, { x: 0, y: 0 }),
+    mat3Apply(m, { x: w, y: 0 }),
+    mat3Apply(m, { x: w, y: h }),
+    mat3Apply(m, { x: 0, y: h }),
+  ];
+  const handleOffset = Math.max(24, Math.min(w, h) * 0.08);
+  const topMid = { x: (corners[0].x + corners[1].x) / 2, y: (corners[0].y + corners[1].y) / 2 };
+  const rotateHandle = mat3Apply(m, { x: w / 2, y: -handleOffset });
+  const center = mat3Apply(m, { x: cx, y: cy });
+  return { corners, topMid, rotateHandle, center };
+}
+
+/** Shared between hit-testing (pointerdown) and the handles' own drawn
+ *  size, so a handle always looks exactly as big as its actual hit
+ *  target — proportional to the document's own size rather than a fixed
+ *  pixel count, since the gizmo is drawn in document space (see
+ *  `gizmoGeometry`) and a fixed radius would read as tiny on a large
+ *  canvas or oversized on a small one. */
+function gizmoHandleRadius(engine: Engine): number {
+  return Math.max(16, Math.min(engine.doc.width, engine.doc.height) * 0.03);
+}
+
+const distance = (a: DocPoint, b: DocPoint) => Math.hypot(a.x - b.x, a.y - b.y);
+
+/** The gizmo box is an affine (rotate/uniform-scale/translate) image of
+ *  the document rect, so it's always a parallelogram with the source
+ *  rect's own winding order preserved (scale is clamped positive — see
+ *  `TransformPanel.tsx`'s `RANGES` — so it never flips). That means a
+ *  plain same-sign-of-cross-product-on-every-edge test is a correct
+ *  point-in-quad check, no general polygon-clipping needed. */
+function pointInConvexQuad(p: DocPoint, corners: DocPoint[]): boolean {
+  let sign = 0;
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i];
+    const b = corners[(i + 1) % corners.length];
+    const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    if (Math.abs(cross) < 1e-6) continue;
+    const s = Math.sign(cross);
+    if (sign === 0) sign = s;
+    else if (s !== sign) return false;
+  }
+  return true;
+}
+
+/** In-progress canvas gizmo gesture (task 2.21) — one of the three
+ *  operations a grabbed handle can mean. Each variant carries exactly
+ *  what its own pointermove math needs (see `handlePointerMove`) plus
+ *  the `snapshotLayerTransform` "before" state(s) `commitLayerTransform`
+ *  needs at pointerup, the same begin/commit-a-whole-gesture split
+ *  `TransformPanel.tsx`'s slider already uses — a drag updates the
+ *  channel every pointermove via `previewLayerTransformValue`, but that
+ *  should still collapse into a single undo step, not one per pixel
+ *  moved. */
+type GizmoDrag =
+  | { kind: 'move'; startX: number; startY: number; baseTx: number; baseTy: number; snapX: TransformSnapshot; snapY: TransformSnapshot }
+  | { kind: 'scale'; center: DocPoint; startDist: number; baseScale: number; snap: TransformSnapshot }
+  | { kind: 'rotate'; center: DocPoint; startAngle: number; baseRotation: number; snap: TransformSnapshot };
+
+type TransformSnapshot = ReturnType<Engine['snapshotLayerTransform']>;
 
 /**
  * The real drawing surface — the first non-harness consumer of
@@ -234,6 +314,19 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
   const lassoMoving = useRef(false);
   const [lassoPath, setLassoPath] = useState<{ x: number; y: number }[]>([]);
 
+  // Canvas transform gizmo (task 2.21): the in-progress drag, if any —
+  // `null` between gestures and while a gizmo pointerdown misses every
+  // handle/the box entirely (a click outside the gizmo is just a no-op,
+  // not a new gesture of any kind, unlike the lasso's own "outside starts
+  // a new selection" behavior). `forceGizmoUpdate` re-renders the SVG
+  // overlay on every pointermove — needed because `previewLayerTransformValue`
+  // mutates engine state directly with no React state backing it, the
+  // same reasoning `forceSelectionUpdate` already uses for the lasso
+  // outline, just triggered every pointermove here instead of only at
+  // gesture start/end.
+  const gizmoDrag = useRef<GizmoDrag | null>(null);
+  const [, forceGizmoUpdate] = useState(0);
+
   const handlePointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const engine = engineRef.current;
     if (!engine) return;
@@ -256,6 +349,42 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
       }
       return;
     }
+    if (modeRef.current === 'gizmo') {
+      const geo = gizmoGeometry(engine);
+      const hitRadius = gizmoHandleRadius(engine);
+      if (distance(sample, geo.rotateHandle) < hitRadius) {
+        gizmoDrag.current = {
+          kind: 'rotate',
+          center: geo.center,
+          startAngle: Math.atan2(sample.y - geo.center.y, sample.x - geo.center.x),
+          baseRotation: engine.getLayerTransformValue('rotation'),
+          snap: engine.snapshotLayerTransform('rotation'),
+        };
+      } else if (geo.corners.some((c) => distance(sample, c) < hitRadius)) {
+        gizmoDrag.current = {
+          kind: 'scale',
+          center: geo.center,
+          startDist: Math.max(1, distance(sample, geo.center)),
+          baseScale: engine.getLayerTransformValue('scale'),
+          snap: engine.snapshotLayerTransform('scale'),
+        };
+      } else if (pointInConvexQuad(sample, geo.corners)) {
+        gizmoDrag.current = {
+          kind: 'move',
+          startX: sample.x,
+          startY: sample.y,
+          baseTx: engine.getLayerTransformValue('x'),
+          baseTy: engine.getLayerTransformValue('y'),
+          snapX: engine.snapshotLayerTransform('x'),
+          snapY: engine.snapshotLayerTransform('y'),
+        };
+      } else {
+        return; // Missed the gizmo entirely — no gesture, no pointer capture.
+      }
+      e.currentTarget.setPointerCapture(e.pointerId);
+      drawingId.current = e.pointerId;
+      return;
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     drawingId.current = e.pointerId;
     engine.beginStroke(strokeBrushRef.current, strokeColorRef.current, sample);
@@ -267,6 +396,23 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
     if (modeRef.current === 'lasso') {
       if (lassoMoving.current) engineRef.current?.moveSelectionTo(sample);
       else setLassoPath((prev) => [...prev, { x: sample.x, y: sample.y }]);
+      return;
+    }
+    if (modeRef.current === 'gizmo') {
+      const engine = engineRef.current;
+      const drag = gizmoDrag.current;
+      if (!engine || !drag) return;
+      if (drag.kind === 'move') {
+        engine.previewLayerTransformValue('x', drag.baseTx + (sample.x - drag.startX));
+        engine.previewLayerTransformValue('y', drag.baseTy + (sample.y - drag.startY));
+      } else if (drag.kind === 'scale') {
+        const d = Math.max(1, distance(sample, drag.center));
+        engine.previewLayerTransformValue('scale', clamp(drag.baseScale * (d / drag.startDist), 0.1, 3));
+      } else {
+        const angle = Math.atan2(sample.y - drag.center.y, sample.x - drag.center.x);
+        engine.previewLayerTransformValue('rotation', drag.baseRotation + (angle - drag.startAngle));
+      }
+      forceGizmoUpdate((v) => v + 1);
       return;
     }
     engineRef.current?.pushStroke(sample);
@@ -292,6 +438,23 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
         setLassoPath([]);
       }
       forceSelectionUpdate((v) => v + 1);
+      return;
+    }
+    if (modeRef.current === 'gizmo') {
+      const engine = engineRef.current;
+      const drag = gizmoDrag.current;
+      gizmoDrag.current = null;
+      if (engine && drag) {
+        if (drag.kind === 'move') {
+          engine.commitLayerTransform('x', drag.snapX);
+          engine.commitLayerTransform('y', drag.snapY);
+        } else if (drag.kind === 'scale') {
+          engine.commitLayerTransform('scale', drag.snap);
+        } else {
+          engine.commitLayerTransform('rotation', drag.snap);
+        }
+      }
+      forceGizmoUpdate((v) => v + 1);
       return;
     }
     engineRef.current?.endStroke();
@@ -341,6 +504,22 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
         {engineRef.current?.selection && (
           <polygon className="cl-selection-outline" points={engineRef.current.selection.points.map((p) => `${p.x},${p.y}`).join(' ')} />
         )}
+        {mode === 'gizmo' &&
+          engineRef.current &&
+          (() => {
+            const geo = gizmoGeometry(engineRef.current);
+            const r = gizmoHandleRadius(engineRef.current);
+            return (
+              <g className="cl-gizmo">
+                <polygon className="cl-gizmo-box" points={geo.corners.map((p) => `${p.x},${p.y}`).join(' ')} />
+                <line className="cl-gizmo-rotate-line" x1={geo.topMid.x} y1={geo.topMid.y} x2={geo.rotateHandle.x} y2={geo.rotateHandle.y} />
+                {geo.corners.map((c, i) => (
+                  <circle key={i} className="cl-gizmo-handle" cx={c.x} cy={c.y} r={r} />
+                ))}
+                <circle className="cl-gizmo-handle cl-gizmo-rotate-handle" cx={geo.rotateHandle.x} cy={geo.rotateHandle.y} r={r} />
+              </g>
+            );
+          })()}
       </svg>
 
       <p className="cl-status">{ready ? 'Ready.' : 'Starting…'}</p>
@@ -354,6 +533,9 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
         </button>
         <button className="cl-railbtn" aria-pressed={mode === 'lasso'} onClick={() => setMode('lasso')} aria-label="Lasso" title="Lasso select">
           <LassoIcon />
+        </button>
+        <button className="cl-railbtn" aria-pressed={mode === 'gizmo'} onClick={() => setMode('gizmo')} aria-label="Move layer" title="Move / scale / rotate the layer">
+          <TransformIcon />
         </button>
         <button
           className="cl-colorwell"

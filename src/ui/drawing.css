@@ -131,6 +131,33 @@
   }
 }
 
+/* -- Canvas transform gizmo (task 2.21) -- */
+
+.cl-gizmo-box {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.cl-gizmo-rotate-line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.cl-gizmo-handle {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.cl-gizmo-rotate-handle {
+  fill: var(--accent);
+}
+
 .cl-status {
   position: absolute;
   left: 50%;

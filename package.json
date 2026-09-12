@@ -20,6 +20,7 @@
     "test:new-project-smoke": "node scripts/new-project-smoke.mjs",
     "test:keyframe-smoke": "node scripts/keyframe-smoke.mjs",
     "test:lasso-smoke": "node scripts/lasso-smoke.mjs",
+    "test:gizmo-smoke": "node scripts/gizmo-smoke.mjs",
     "test:rules": "node scripts/firestore-rules-test.mjs",
     "test:storage-rules": "node scripts/storage-rules-test.mjs",
     "cap:sync": "cap sync ios",

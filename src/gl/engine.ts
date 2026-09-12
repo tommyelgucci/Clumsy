@@ -100,6 +100,21 @@
  * isn't built to do safely). Real follow-ups, not oversights — see
  * checkpoint.md.
  *
+ * Canvas transform gizmo (task 2.21): dragging a layer's box/handles
+ * directly on the canvas, instead of only through the Transform panel's
+ * sliders. Needed no new engine surface at all — `getLayerTransformValue`/
+ * `snapshotLayerTransform`/`previewLayerTransformValue`/
+ * `commitLayerTransform` (task 2.16, above) already generalize over any
+ * of the five properties regardless of who's driving them, so the on-
+ * canvas gizmo (`DrawingCanvas.tsx`) just calls the same four methods a
+ * slider drag does, computing its move/scale/rotate deltas from pointer
+ * position instead of a `<input type="range">`'s value. The gizmo's own
+ * box/handle geometry is derived UI-side from the same `mat3FromTRS`
+ * math the renderer already uses to place the transformed layer
+ * (`gl/renderer.ts`'s `rasterizeLayer`) — kept there rather than added
+ * here, since it's pure display geometry with nothing for the engine's
+ * document/history model to own.
+ *
  * Selection-constrained painting (task 2.19): `clipToSelection` is the
  * one mechanism behind all of it — given a dirty rect's pixels before
  * and after some paint operation, it reverts anything outside the
