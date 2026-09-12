@@ -1,5 +1,1310 @@
 # Checkpoint — Progress log
 
+### 2026-09-12 — Tasks 2.19/2.20 (done): selection-constrained painting, copy/duplicate
+
+Both explicit scope cuts named in task 2.17's own verify_note, picked up
+together since they touch the same lasso feature and test script.
+
+**2.19 — selection-constrained painting.** New private
+`Engine.clipToSelection(rect, before, after)`: given a dirty rect's
+pixels before and after some paint operation, reverts anything outside
+the current selection back to `before`. Applied after the fact to
+whatever `beginStroke`'s merges, `floodFill`, and `clearActiveLayer`
+already computed, rather than trying to constrain the paint operations
+themselves — simpler, and correct regardless of the operation's own
+math. `clearActiveLayer` gained a whole second branch for the selection
+case (clearing only the masked pixels, not the full cel).
+
+Building this surfaced a more interesting bug than a typo: a bucket
+fill's flood algorithm is connectivity-based, not spatially local like a
+stroke — clicking outside an active selection on a large connected
+blank-paper region could still flood color into the selection's own
+interior, since nothing walled off the mask boundary from the flood
+traversal itself. Clipping alone only controls which pixels may end up
+modified, not whether the fill should run at all — fixed by rejecting
+the whole attempt up front when the click itself falls outside the
+current selection. Strokes don't need the equivalent guard, since
+they're spatially local and per-pixel clipping alone already produces
+the right result. Caught via a Playwright check reading actual pixel
+values at a point placed away from existing ink but still inside the
+selection, after a separate outside-fill attempt had already run.
+
+**2.20 — copy/duplicate a selection.** New `Engine.duplicateSelection`:
+copies (not cuts) the selection's masked pixels, pastes them at a small
+fixed offset via `drawOver`, and moves the selection to wrap the new
+copy so the existing move gesture can carry it further. A visible
+offset rather than an exact overlap, since an overlap would be
+indistinguishable from a no-op to both the user and a pixel-reading
+test. New rail button (reusing the timeline's duplicate-frame icon) plus
+a Ctrl/Cmd+D shortcut.
+
+Both verified by extending `scripts/lasso-smoke.mjs` rather than new
+scripts. Full 11-script Playwright suite, 138 unit tests, `tsc`, `lint`,
+and `build` all clean.
+
+Still open, real follow-ups: no resize/rotate of a selection or its
+duplicate, and a moved/duplicated selection still can't be dragged
+partially off-canvas.
+
+### 2026-09-12 — Task 2.18 (done): easing curve editing for keyframes
+
+Named as a real gap in task 2.16's own verify_note: every keyframe
+defaulted to `easeInOut` with no way to change it. New
+`Engine.getKeyframeEasing`/`setKeyframeEasing` and a `<select>` in the
+Transform panel, shown only when the current frame actually has a
+keyframe to attach an easing choice to.
+
+Building this surfaced a real interaction with an existing, deliberate
+behavior: `core/document.ts`'s `setKeyframe` intentionally ignores
+whatever easing is passed when updating an existing keyframe (a
+documented invariant, its own unit test names it directly), so a plain
+value drag can't accidentally reset a carefully-chosen easing. The first
+version of `setKeyframeEasing` went through `setKeyframe` anyway and
+silently did nothing — caught by a Playwright check reading the actual
+keyframe's easing back from the engine, not just the DOM select's own
+value. Fixed by mutating the found keyframe's `easing` field directly
+instead, since "change this keyframe's easing" is a genuinely different
+operation from "set/move a keyframe's value."
+
+Verified by extending the existing `keyframe-smoke.mjs` rather than a
+new script, since this is a direct extension of the same panel. Full
+11-script Playwright suite, 138 unit tests, `tsc`, `lint`, and `build`
+all clean.
+
+### 2026-09-12 — Task 3.4 (in_progress, one disclosed gap): Cloud Function — receipt validation
+
+Built ahead of 3.3 (needs a real StoreKit client and device) the same
+way 5.2 was built ahead of 5.1's own UI half: the decision logic and
+HTTP/auth plumbing need no real client, only a fake App Store Server API
+response. Marked `in_progress`, not `done` — deliberately, because one
+real security gap remains and this project's own honesty bar (see the
+camera plugin's "written but unverified on real hardware" notes) doesn't
+allow calling that done.
+
+New `functions/src/appStoreAuth.ts` signs the ES256 JWT Apple's App Store
+Server API requires as auth, using Node's own `crypto` module (no added
+JWT-library dependency) — tested against a throwaway keypair generated
+at test time. `appStoreClient.ts` calls the real endpoint shape with an
+injectable `fetchImpl`. `transactionPayload.ts` decodes the JWS Apple
+returns and validates its shape, but does **not** verify the JWS
+signature against Apple's certificate chain — a deliberate, clearly
+disclosed gap: full X.509 chain validation up to Apple's real root CA is
+genuine security-critical crypto that can't be safely eyeballed into
+existence without a real Apple-signed payload to test against, which
+nothing in this environment can produce. Until that's added,
+`validateReceiptCallable` isn't safe to accept real payments with, even
+though every other piece — auth, the HTTP call, parsing, the entitlement
+decision (`entitlement.ts`), and rejecting without writing anything on
+any failure (`validateReceipt.ts`'s orchestration) — is built and tested.
+
+29 unit tests total, several named directly after this task's own
+acceptance criteria wording. Along the way, fixed a real gap in
+`functions/`'s own tooling (its tsconfig excluded test files from
+typechecking entirely — split into a type-checking config and a
+build-only one) and excluded `functions/` from the root ESLint config,
+which was linting it under browser-oriented rules never meant for a
+separate, self-contained Cloud Functions package. tsc, lint, and all 138
+web-app unit tests remain clean; no web app code touched.
+
+### 2026-09-12 — Task 5.2 (done): Cloud Function — report crosses threshold, hide the clip
+
+New `functions/` package: `firebase-admin`/`firebase-functions` as real
+dependencies, Node 20 target (the actual Cloud Functions runtime), its
+own `tsconfig.json`, and the same `register-ts-loader.mjs` trick the main
+app's `npm test` uses (copied in rather than imported across the package
+boundary, since `functions/` needs to stay self-contained and
+independently deployable).
+
+`functions/src/moderation.ts` holds the real decision — `REPORT_THRESHOLD
+= 1`, `shouldHideClip(reportCount)` — as plain, Firebase-free logic,
+testable with plain Node the same way this project's own `core/` modules
+are. `functions/src/index.ts` is a thin Firestore trigger wrapper: on a
+new `reports/{reportId}` document, counts existing reports for that
+report's `clipId`, and once the threshold's crossed, writes
+`clips/{clipId}.hidden = true` with Admin SDK privileges — the same
+field `firestore.rules` refuses to every client, by design.
+
+Genuinely attempted the fuller integration test too (a real Functions +
+Firestore emulator pair, creating an actual report doc and checking the
+clip gets hidden), not just the pure-logic unit tests — the emulator
+loads the function definition fine but fails registering the Firestore
+trigger with what looks like an emulator-suite/sandbox networking quirk
+(confirmed it isn't the usual proxy-blocks-egress explanation, since
+127.0.0.1/localhost are already exempted from this environment's egress
+policy). Documented rather than silently skipped, same honesty bar the
+camera plugin's "written but unverified on real hardware" notes already
+use elsewhere. 3 unit tests pass, `tsc`/build both clean.
+
+### 2026-09-12 — Tasks 4.1/5.1 (schema half): clips + reports Firestore/Storage rules
+
+Owner asked to keep advancing everything that doesn't need them, ordered
+easiest to hardest. Starting on the Firebase/moderation backend now that
+the animation-engine push (keyframes, lasso) is shipped: the clips and
+reports collections' security rules, built ahead of their nominal
+dependencies the same way 3.2 was built ahead of 3.1 — the rules need no
+client UI at all to be fully testable against the local emulator, even
+though the UI that would actually create these documents (the feed, a
+publish button, a report button) is still pending, most of it gated on
+export (2.4) existing first.
+
+`firestore.rules` gained `clips/{clipId}` (public read unless `hidden` —
+task 5.2's moderation flag — except the owner can still see their own
+even hidden; create requires matching `ownerId` and `hidden == false`;
+no client update at all; owner-only delete) and `reports/{reportId}`
+(write-only from the client, `reporterId` can't be spoofed, no read
+access for anyone client-side — only the moderation Cloud Function and
+the review panel ever read these). New `storage.rules` for the actual
+video file, using path-based ownership (`clips/{ownerId}/{clipId}`)
+rather than custom metadata — simpler to write and test, and a client
+can't even attempt a write outside their own prefix. New Storage
+emulator config in `firebase.json` (port 9199) and
+`scripts/storage-rules-test.mjs`. `scripts/firestore-rules-test.mjs`
+gained 11 new checks across both collections.
+
+Both tasks marked `in_progress`, not `done` — their real acceptance
+criteria describe a working user-facing flow (publish a clip, report a
+clip) that doesn't exist yet and can't honestly be claimed done just
+because the backend rules are solid. tsc, lint, build, and all 138 unit
+tests remain clean; this didn't touch any web app code.
+
+### 2026-09-11 — Task 2.17 (new): lasso selection — draw, move, undo/redo
+
+Second half of the owner's "push further on the animation engine
+(keyframes and lasso)" request. Unlike keyframes, which only needed a UI
+on top of an already-ported data model, lasso selection had zero
+groundwork — a genuinely new engine feature.
+
+New `core/selection.ts` rasterizes a closed freehand path into a 0/1
+mask via a pure-JS even-odd scanline fill, deliberately NOT the
+Canvas2D-based rasterizer Trace's own `core/selection.ts` uses: that
+would break this project's "core/ pure, no DOM" rule (Trace's own
+version of that rule already carries a canvas exception; Clumsyloop's
+doesn't), and this project's `core/*.test.ts` files run under plain Node
+with no DOM at all, so a canvas-based rasterizer couldn't be unit tested
+the way `core/flood.ts` already is. Trade-off: a hard, non-antialiased
+selection edge — the same reasoning `core/flood.ts`'s own tolerance test
+already accepts for a fill boundary.
+
+`gl/engine.ts` gained `setLassoSelection`/`clearSelection`/
+`selectionContains` and a `beginMoveSelection`/`moveSelectionTo`/
+`endMoveSelection` trio: the move cuts the masked pixels into a floating
+buffer, previews the drag live via a scratch surface composited as an
+overlay (the same mechanism a wet stroke's live preview already uses —
+`activeStrokeOverlay` got renamed to `activeOverlay` to cover both,
+since a stroke and a selection move can never be in progress at once),
+and pastes the result down via `drawOver` (proper alpha compositing)
+rather than `writeRect`, so whatever was already at the destination
+outside the mask's shape survives. The whole cut+paste gesture is one
+undo step via a full-cel before/after snapshot.
+
+New `'lasso'` tool mode in `DrawingCanvas.tsx`: pointer handlers hit-test
+`engine.selectionContains` at pointerdown to tell "start a new lasso"
+from "grab the existing selection to move it" apart. The outline (both
+the in-progress path and the committed selection, animated as marching
+ants) renders in a new SVG overlay that shares the canvas's own
+object-fit:contain-equivalent scaling via `preserveAspectRatio`, needing
+no manual coordinate math.
+
+Two real bugs caught and fixed while building this: a plain click
+without dragging would cut the selection's pixels away and never
+restore them (the floating scratch was only populated by the drag
+handler, which a click never calls) — fixed by placing the floating
+buffer at its origin immediately in `beginMoveSelection`. And calling an
+engine mutation from inside a `setLassoPath` functional state updater
+produced a genuine React warning (updater functions must stay pure) —
+fixed by reading the state value directly instead. A third, cosmetic bug
+only surfaced by actually looking at a screenshot: the selection
+outline's white stroke was invisible against white paper — changed to
+the app's accent blue.
+
+Verified via a new `scripts/lasso-smoke.mjs` and 7 new unit tests in
+`selection.test.ts`. All 11 Playwright smoke tests, 138 unit tests,
+`tsc`, `lint`, and `build` all clean.
+
+Deliberately out of scope, real follow-ups: a selection doesn't
+constrain painting outside the lasso tool's own move gesture, no
+copy/duplicate (only move), no resize/rotate of the floating piece, and
+a moved selection can't be dragged partially off-canvas.
+
+### 2026-09-11 — Task 2.16 (new): keyframed layer transforms — the Transform panel
+
+Owner asked to push further on the animation engine specifically —
+keyframes and lasso selection — after the timeline and format picker.
+`core/document.ts`'s `TransformTrack`/`Channel` model (x/y/scale/rotation/
+opacity, each independently keyframeable with easing) has existed since
+task 2.1, ported from Trace, and the renderer has sampled it at the
+composited frame ever since — nothing before this task ever let a user
+actually set a keyframe, so every layer sat permanently at its identity
+transform.
+
+`gl/engine.ts` gained read helpers plus `previewLayerTransformValue`
+(live drag feedback, no history), `snapshotLayerTransform`/
+`commitLayerTransform` (collapses a whole slider drag into one undo
+step), and `toggleKeyframeHere` (the explicit stopwatch add/remove) — all
+on the active layer, mirroring Trace's own convention read directly from
+its `core/engine.ts`: a property with no keyframes yet is a plain static
+edit to its base value; once any keyframe exists on it, further edits
+add/move a keyframe at the current frame instead. Needed zero renderer
+changes — `rasterizeLayer`/`composite` already sampled `layer.transform`
+since task 2.1.
+
+The one-undo-step-per-drag behavior needed real handling: React's
+onChange for a range input fires on every intermediate value through a
+whole drag (it's wired to the native `input` event, not `change`), so a
+naive push-per-onChange would mean one undo step per pixel dragged. New
+`TransformSlider` captures a channel snapshot lazily on the first
+onChange since the last commit and commits once on pointerup/blur — the
+same begin/commit idea as Beautyapp's own `Slider.tsx`, reimplemented on
+native events rather than porting that component for one row of sliders.
+
+New `TransformPanel.tsx` (a 6th floating panel) with a slider + keyframe
+toggle per property; rotation is stored in radians (unchanged, matching
+`mat3FromTRS`) but shown to the user in degrees, a display-only
+conversion. Verified via a new `scripts/keyframe-smoke.mjs` checking
+actual composited pixels, not just engine state: a static edit visibly
+moves a drawn dot and undoes/redoes as one step regardless of onChange
+event count; the stopwatch toggle adds/removes keyframes at the exact
+current frame without disturbing others. Re-verified the full 9-script
+Playwright suite with zero changes needed. 131 unit tests, `tsc`, `lint`,
+and `build` all clean.
+
+Deliberately out of scope: a visual keyframe track/timeline scrubber,
+easing-curve editing (every keyframe uses the default `easeInOut`), and
+a canvas transform gizmo (dragging the layer directly with a pointer) —
+real follow-ups, not oversights.
+
+### 2026-09-11 — Task 2.15 (new): canvas format picker at project creation
+
+The other confirmed-but-unbuilt piece from the direction correction:
+`core/document.ts`'s `newDocument()` default (1080x1920) was flagged
+there as a leftover from the wrong TikTok-only assumption, with the
+owner's fix already decided — a preset picker at project creation
+(vertical 9:16 / horizontal 16:9 / square 1:1), not a single fixed
+default or free-form custom sizing, matching Procreate/ToonSquid/Clip
+Studio Paint's own convention. Picked up right after the timeline (task
+2.14) while continuing to advance everything not blocked on hardware.
+
+New `core/projectPresets.ts` holds the three presets, at the same modest
+360-pixel-scale resolution the app's one hardcoded default already used
+— explicitly NOT the production-resolution question (1080x1920 or
+otherwise), which is a separate, bigger decision about GPU memory and
+render cost nobody has made yet. `DrawingCanvas` gained optional
+`preset`/`onNewProject` props (defaulting to the same 360x640 every
+existing test already assumed, so first-load behavior is unchanged) and
+a "New project" panel. The actual project-switching logic lives in
+`App.tsx`, not `DrawingCanvas`: starting a new project throws away the
+whole canvas/Engine/Renderer and mounts a fresh one via a React `key`
+change, rather than trying to resize an existing Engine/Renderer in
+place — simpler and safer than building a `Renderer.dispose()`/reset
+path this project has never needed before. A separate `projectEpoch`
+counter (not just the preset value) makes sure picking the same preset
+twice in a row still resets the project.
+
+Verified via a new `scripts/new-project-smoke.mjs`: default project is
+still 360x640; drawing a stroke then switching to Horizontal 16:9 lands
+on a genuinely fresh 640x360 document (one layer, zero cels — not a
+resized copy); Square 1:1 lands on 480x480. Re-verified the full
+pre-existing 8-script Playwright suite with zero changes needed to any
+of them. 131 unit tests, `tsc`, `lint`, and `build` all clean.
+
+Still open: `core/document.ts`'s own `newDocument()` default (1080x1920)
+is untouched — this picker only controls what the UI passes into it, it
+doesn't change that function's own defaults.
+
+### 2026-09-11 — Task 2.14 (new): timeline — frame navigation, add/duplicate/delete frame, onion skin, fps
+
+Follow-up to the direction correction below: once Clumsyloop was reframed
+as a general-purpose animation app rather than a TikTok-only tool, the
+owner asked to advance everything that doesn't depend on hardware. The
+single biggest remaining camera-independent gap turned out to already be
+half-built: `core/document.ts`'s `Cel` model was already a sparse
+`Map<frame, Cel>` per layer (ported from Trace, complete with
+`celAt`/`celStartFrame`/`celHoldLength`), and `gl/renderer.ts`'s
+`renderDocumentFrame(doc, frame)` already composited at an arbitrary
+frame — neither needed a single line changed. `gl/engine.ts` was the only
+piece still hardcoded to frame 0 (task 2.6's own doc comment said as
+much: "single frame (frame 0), no timeline yet"), because nothing had
+ever exposed frame navigation through the UI.
+
+Generalized `Engine.ensureCel`/`beginStroke`/`clearActiveLayer`/
+`floodFill` from a hardcoded `0` to a `frame` parameter (captured once at
+the start of an action, not read live, so an action can't be retargeted
+mid-flight), and added `currentFrame` navigation (`setCurrentFrame`/
+`stepFrame`), `addCel(duplicate?)`/`deleteCel()` on the active layer, an
+onion-skin toggle, and an `fps` setter — `addCel`/`deleteCel` mirror
+Trace's own `core/engine.ts` semantics directly (read from the sibling
+clone, not guessed): duplicating copies the currently-held cel's pixels,
+adding grows `doc.frameCount` only if needed (reversibly), and deleting
+only removes a cel that starts exactly at the current frame, not
+whichever cel is currently held. Onion skin needed zero renderer changes:
+it renders the previous frame through the same `renderDocumentFrame` call
+already in use, with paper forced transparent on a shallow-cloned doc
+object, then `drawOver`s it under the current frame at a fixed 0.35
+opacity — the renderer's existing primitives already covered it.
+Deliberately narrower than Trace's own onion skin (one frame back only,
+fixed opacity, no tinted ghost) and narrower than Callipeg/RoughAnimator's
+full per-frame variable hold-duration FPS control (this is one global fps
+setting) — both real, intentional scope cuts, documented as such rather
+than silently claimed as the full feature.
+
+New `src/ui/Timeline.tsx` (prev/next frame, frame counter, new/duplicate/
+delete-frame, onion toggle, fps input) as an always-visible bottom-center
+rail, following `LayersPanel`'s established `engine.subscribe()` pattern.
+Deliberately not a filmstrip — no per-frame thumbnail rendering yet, a
+real future addition. `DrawingCanvas.tsx`'s initial document changed from
+a hardcoded single frame to 24, matching `newDocument`'s own stated
+default, so the timeline actually has room to be useful from the start.
+
+Verified via a new `scripts/timeline-smoke.mjs`: frame isolation (reading
+each frame's own composite directly, unaffected by onion either way),
+duplicate/delete/undo/redo across a sequence of frame actions, and onion
+skin confirmed by reading back the renderer's own `'onionAcc'` scratch
+surface directly rather than the presented canvas (the same live-WebGL-
+readback caveat CLAUDE.md already flags). Caught and fixed two real
+issues along the way: the same thin-brush sampling-window pitfall
+`undo-smoke.mjs` already documented for the default brush, and a genuine
+narrow-phone layout overflow in the new timeline rail (fps field cut off
+at 390px) — tightened, re-screenshotted, confirmed usable though still
+snug at the very narrowest widths. All 8 Playwright smoke tests, 131 unit
+tests, `tsc`, `lint`, and `build` all clean.
+
+Still open, deliberately out of scope for this task: a real filmstrip
+with per-frame thumbnails, per-frame adjustable hold duration (vs. this
+task's single global fps), a richer onion-skin panel (configurable
+before/after frame count, opacity, tinted ghost — Trace's own version),
+and the canvas format-picker feature named in the direction-correction
+entry below (still unbuilt).
+
+### 2026-09-11 — Task 2.13 (new): layout rearchitecture — full-bleed canvas, floating rails and panels
+
+Follow-up to the direction correction below and to task 2.12's own known
+limits: the owner, after this session's correction that Clumsyloop is a
+general-purpose animation app (not TikTok-only), asked directly for the
+UI to actually look and behave like one — pointing at Trace as the
+reference. Cloned three sibling repos read-only for concrete ideas
+(`draw`/Trace, `Beautyapp`, `mis-proyectos` — the last turned out to be
+an unrelated monorepo, deprioritized) and confirmed by reading Trace's
+real `src/styles.css`/`controls.tsx`/`Toolbar.tsx` that its actual layout
+is not a docked sidebar at all: the canvas fills the whole viewport
+full-bleed, and small floating translucent "rail" toolbars plus closeable
+floating "panel" overlays sit on top of it, never sharing layout space
+with it. Task 2.12's docked-panel approach (a capped, scrolling panel
+permanently beside/below the canvas) fixed the two bugs it was built to
+fix but kept the more basic problem: the canvas still had to shrink to
+make room for the panel. Given the choice between a format-picker-only
+change, a docked-panel label-bug fix, or the full rearchitecture, the
+owner picked the rearchitecture.
+
+Rebuilt `drawing.css` around Trace's actual pattern: `.cl-app`
+(`position:fixed;inset:0`, full viewport), `.cl-canvas`
+(`position:absolute;inset:0;object-fit:contain`, no wrapping card or
+border), `.cl-rail`/`.cl-rail--left`/`.cl-rail--top` (small translucent,
+blurred, `position:absolute` pill toolbars with 40x40 icon-only
+buttons), and `.cl-panel` (a right-anchored `position:absolute` floating
+overlay card). Removed entirely: `.cl-main`, `.cl-canvas-col`,
+`.cl-panels`, `.cl-toolbar`, the `@media (min-width: 700px)` docked-layout
+block — none of that structure is needed once panels float instead of
+sharing space. New `src/ui/FloatingPanel.tsx` supplies every panel's
+title bar, close button, and Escape-to-close behavior (ported from
+Trace's own `Panel` component) — deliberately does NOT port Trace's
+drag-to-reposition, since a fixed right-edge anchor already fixes the
+actual complaint without the extra state a draggable position needs.
+`DrawingCanvas.tsx` gained `activePanel: PanelId | null` (closed by
+default, toggled by rail buttons) for Layers/Brush/Color; Undo/Redo/Clear
+deliberately stayed as always-visible top-rail buttons, not behind a
+panel, so no existing test needed to change how it reaches them.
+`LayersPanel.tsx` lost its own redundant header (now supplied by
+`FloatingPanel`) with every per-row aria-label and DOM structure
+otherwise untouched. Two new icons (`LayersIcon`, `CloseIcon`) added to
+`icons.tsx` following its existing pattern.
+
+Verified against the full 7-script Playwright smoke suite (not just the
+five engine-adjacent ones), plus `tsc`, `lint`, all 131 unit tests, and
+`npm run build` — all clean. Six of the seven scripts
+(renderer/persistence/drawing/bucket/undo/wet-stroke) passed completely
+unchanged, since they drive brush/mode/color through
+`window.__clumsyloopTool`/engine JS calls rather than clicking UI chips,
+and Undo/Redo/Clear kept their exact pre-existing accessible names. Only
+`layers-smoke.mjs` needed a change: since the Layers panel is now closed
+by default, its first interaction ("Add layer") timed out until a single
+line — `await page.getByRole('button', { name: 'Layers' }).click()` —
+was added right after the engine-ready wait to open the panel once at the
+start of the script. Zero engine or rendering changes; this task touched
+only `ui/`.
+
+Not done in this task, still open: the canvas format-picker feature
+itself (preset-based, referenced against Trace's own `SIZE_PRESETS`/
+`NewProjectControls` pattern but no code written), and the broader
+onion-skinning/keyframe-rig/lasso-selection/adjustable-FPS backlog named
+in the direction-correction entry below — none scoped into tasks yet.
+
+### 2026-09-11 — Direction correction: Clumsyloop is not a TikTok-only app
+
+Important enough to log on its own, separate from any single task. The
+owner corrected a fundamental misreading that had been sitting in
+`CLAUDE.md`/`RUMBO.md` since before this session and that this session
+kept building on top of without questioning it: Clumsyloop was described
+as a short-form, TikTok/Reels-only, vertical-video app with drawing as a
+feature bolted onto stop-motion. That was never what the owner wanted —
+an earlier session introduced it, and it shaped real decisions downstream
+(the document's default 1080x1920 canvas size, at least one feature
+explicitly rejected as "a mismatch with the product's identity," a
+build-order argument that treated the camera plugin as an existential
+risk rather than just a real one).
+
+What the owner actually wants, in their own terms: an easier version of
+Trace to animate with — for TikTok, for YouTube cartoons, for easier
+stop-motion, "etc." — a genuine animation app, positioned as "an improved
+Procreate Dreams." Pushed further with a concrete competitive bar: not
+just Procreate Dreams, but ToonSquid, Clip Studio Paint, Callipeg, and
+RoughAnimator — the actual set of iPad/mobile 2D animation tools, each
+strong in a different way (rigging and lasso selection, professional
+brush/layer engine, onion skinning, audio/lip-sync and adjustable FPS,
+respectively). And confirmed directly, when asked, that camera capture is
+"a feature more, not the axis" — not the reason the app exists, one
+input source among several on the same timeline.
+
+Corrected `CLAUDE.md` ("What Clumsyloop is") and `RUMBO.md` ("The
+differentiator," "The technical risk that goes first," known debts) and
+`tasks.json`'s `ordering_rule` to reflect this — each edit marked inline
+as a correction rather than silently rewritten, so the reasoning that led
+here (and that it was wrong) stays visible, not erased. Concretely
+reopened: the audio-timeline rejection (2026-09-10) is retracted, not
+just softened — RoughAnimator's own standout feature is exactly that.
+Newly named as real, unbuilt gaps: onion skinning, keyframe/rig-based
+animation, lasso/shape selection, adjustable per-frame FPS — none
+itemized as tasks yet, each needing its own scoping pass.
+
+The one concrete code decision made alongside this: `core/document.ts`'s
+`newDocument()` default (`1080x1920`) is a direct casualty of the wrong
+assumption and is now known-wrong. The owner's call on the fix: a format
+picker at project creation (vertical 9:16 / horizontal 16:9 / square
+1:1), matching how Procreate/ToonSquid/Clip Studio Paint all handle
+canvas size — not a single fixed default, and not free-form custom
+sizing either. Not built yet; `DrawingCanvas.tsx`'s `DOC_WIDTH`/
+`DOC_HEIGHT` test constants and task 2.12's responsive canvas layout
+(below) were both built and verified against 9:16 only so far.
+
+What did NOT change: the iOS-only-for-launch distribution decision
+(App Store, StoreKit, Capacitor native app) is a separate business
+question from what the app IS, and stays as RUMBO.md already had it —
+the web build's own responsive layout (task 2.12) is a development
+convenience, not evidence of a desktop shipping target. Firebase/
+StoreKit/moderation reasoning, the brush/palette porting rationale, and
+the `core`/`gl`/`state`/`ui` architecture are all unaffected — none of
+them were downstream of the wrong assumption.
+
+### 2026-09-11 — Task 2.12 (new): responsive layout — canvas stays fixed and visible
+
+Owner tested 2.11's visual pass and found two real, structural problems,
+not just taste: scrolling down to pick a color scrolled the canvas
+itself out of view (no real drawing app works that way), and the layout
+was hard-capped at 480px wide, wasting almost the whole screen on iPad
+or desktop instead of adapting to it.
+
+Restructured the layout so `.cl-panels` (Layers/Tool/Brush/Color) is the
+ONLY thing that ever scrolls — capped at 42vh on narrow screens — while
+`.cl-canvas-col` (canvas + status + toolbar) is sized top-down from a
+fixed-height `.cl-app` (`100dvh`, never scrolls itself), not bottom-up by
+its own content. At >=700px, `.cl-main` switches from a column to a row:
+the canvas gets most of a much wider stage and the panel becomes an
+independently-scrolling sidebar, instead of a phone-width column centered
+in dead space. The canvas itself gained `object-fit: contain`, since a
+fixed 360x640 intrinsic bitmap never grows past its own pixel size
+without an explicit display size — without this it would sit tiny inside
+a big `.cl-canvas-wrap` on any screen larger than its native resolution.
+
+Two real bugs surfaced while actually testing this, not just reasoning
+about the CSS:
+
+1. `.cl-canvas-col` was first written as `flex: none` (content-sized)
+   instead of `flex: 1` (sized from the parent's definite height) — so
+   the canvas's rendered size could shift mid-test when sibling text
+   changed width (e.g. "Undo" becoming "Undo (Stroke)" the moment there
+   was something to undo), silently invalidating any pointer coordinate
+   a test had already cached. `undo-smoke.mjs`'s second and third stroke
+   checks failed exactly this way — the first stroke (before any label
+   changed) passed, later ones didn't.
+2. `object-fit: contain` means the canvas's CSS box and what's actually
+   rendered inside it can legitimately have different aspect ratios
+   (letterboxing) depending on available space. `DrawingCanvas.tsx`'s
+   `toSample()` needed a real fix to recover the true letterboxed content
+   rect (mirroring the same math `object-fit: contain` itself uses)
+   instead of a naive linear scale across the whole element box — and
+   every Playwright smoke script's own `toScreen()` helper needed the
+   identical fix, since each one independently computes where to click
+   and has to agree with the app's own transform. Fixed in all five
+   scripts that had it (bucket/drawing/layers/undo/wet-stroke-smoke),
+   not just the one that happened to fail first.
+
+Verified with real screenshots at phone (390x844), iPad (834x1194), and
+desktop (1440x900) widths, plus one explicitly scrolling the panel to
+confirm the canvas stays put — not just by reading the CSS and assuming
+it worked. All 7 Playwright smoke tests, 131 unit tests, `tsc`, `lint`,
+and `build` all clean.
+
+### 2026-09-11 — Task 2.11 (new): visual pass on the drawing screen
+
+Owner tested the web preview from earlier today on a phone and compared
+it unfavorably to a TikTok ad — a screen recording of Procreate's own
+Animation Assist feature (identifiable by its timeline UI and Transform/
+Warp tools), being demoed by a course creator selling an "animate like
+this" tutorial. Watched the clip (via the `watch` skill, after installing
+`ffmpeg`, which this environment didn't have yet) to confirm exactly what
+was being compared against before responding, rather than guessing from
+the description alone.
+
+That specific comparison wasn't apples to apples, and said so plainly:
+Procreate is a paid, professional iPad app with 10+ years of development
+behind it; Clumsyloop is weeks into a prototype where the actual
+differentiator (drawing over stop-motion capture) doesn't even have its
+camera plugin verified on a device yet. But the underlying complaint was
+fair — every control in `DrawingCanvas`/`LayersPanel` has been default
+unstyled HTML since task 2.6, on purpose, because all the effort so far
+went into the engine, not the chrome around it. That's a genuinely bad
+way to evaluate a drawing feel, independent of what ad prompted the
+feedback.
+
+Pure visual restyle, deliberately zero engine changes:
+
+- New `src/ui/drawing.css` — plain CSS, not Tailwind (no such dependency
+  exists in this project yet, and one screen doesn't justify adding one).
+  Dark palette keyed off `#17171a`/`#121214`, matching `gl/renderer.ts`'s
+  own WebGL clear color so the page around the canvas doesn't clash with
+  it. Card-style sections (Layers/Tool/Brush/Color) all share the same
+  shape; a segmented Draw/Bucket control; horizontally scrollable brush
+  chip rows with a fade-out mask hinting there's more; circular color
+  swatches with a selection ring.
+- New `src/ui/icons.tsx` — hand-authored inline SVG icons (undo/redo/
+  trash/eye/lock/plus/chevrons/bucket/pencil), no icon-library dependency
+  added, no emoji (this project's own UI-copy conventions rule those out,
+  and it applies to icons too). Every icon is `aria-hidden` so it never
+  contributes to a button's accessible name.
+
+Before touching any markup, enumerated every `getByRole`/`aria-label`
+lookup across all 7 Playwright smoke scripts to know exactly which
+accessible names and DOM shapes were load-bearing: the canvas's
+`id="drawing-canvas"`, a button named exactly `"Clear"`, button names
+matching `/^Undo/` and `/^Redo/`, `LayersPanel`'s `"{verb} {layer.name}"`
+aria-labels (Hide/Show/Lock/Unlock/Move up/Move down/Delete), an exact
+`"Add layer"` match, the `<li><span>` layer-row shape, and `<li input>`
+for renaming. Restyled around every one of those rather than discovering
+breakage after the fact — icon+label buttons kept their original text,
+aria-label-driven buttons kept the exact same aria-label.
+
+Also collapsed the camera-plugin/renderer/persistence dev harnesses in
+`ui/App.tsx` behind a closed-by-default `<details>` — sitting in raw
+unstyled HTML directly below the drawing screen, they were arguably a
+bigger contributor to the "looks like an old program" impression than
+the drawing screen's own controls. Left them functionally untouched,
+just no longer competing for attention by default.
+
+Found and fixed a real, unrelated gap while wiring the CSS import: this
+project never had a `src/vite-env.d.ts`, so `tsc -b` had no ambient
+types for a `.css` side-effect import at all (`import './drawing.css'`
+failed with `TS2882`). Added the standard Vite scaffold file — it was
+simply always missing, since nothing had ever imported a non-TS asset
+here before.
+
+Verified with a real screenshot (Playwright, both Draw and Bucket modes)
+before calling it done, not just by reading the CSS — confirmed the card
+sections, the segmented control's active state, the swatch selection
+ring, and the chip rows' scroll-fade all render as intended. All 7
+Playwright smoke tests re-verified with no regressions and no selector
+changes needed; 131 unit tests, `tsc`, `lint`, and `build` all clean.
+
+### 2026-09-11 — Task 3.2: Firestore schema and security rules
+
+Last of the three things the owner asked for in one go (layers panel,
+wet-stroke staging, starting Firebase) — this is Firebase, and
+specifically the schema/rules half of phase 3, task 3.2, not task 3.1.
+
+3.1 (a real Firebase Console project + Sign in with Apple) genuinely
+can't happen from this environment: it needs an actual account action in
+the Firebase Console and a physical device to test Sign in with Apple on
+(same category of limitation phase 1's camera tasks are already stuck
+on). But 3.2's actual content — the Firestore collections and their
+security rules — doesn't need a live project at all: the Firestore
+emulator runs entirely standalone against a "demo-*" project ID
+(`.firebaserc` uses `demo-clumsyloop`), which Firebase's own tooling
+treats as emulator-only and never tries to reach real GCP for. That's
+the same kind of build-ahead exception this project already used
+repeatedly in phase 2 (2.5/2.6/2.7 built ahead of 2.3's device-blocked
+capture UI), just applied across phases 1/3 this time instead of within
+phase 2.
+
+`firestore.rules` covers exactly the three collections task 3.2's own
+title names — `users`, `projects`, `entitlements` — and nothing from
+phases 4/5 (the public feed's `clips`, moderation's `reports`): those
+aren't itemized tasks yet, and writing rules for a collection with no
+defined write path would be guessing at a design, not scoping actual
+work.
+
+- `users/{userId}`: publicly readable (the future feed needs to show a
+  clip's owner without every viewer needing their own special access),
+  writable only by that user, to their own document.
+- `projects/{projectId}`: read/update/delete gated on the document's
+  *existing* `ownerId` (`resource.data`), create gated on the *incoming*
+  one (`request.resource.data`) — `resource` doesn't exist yet at create
+  time, so conflating the two checks is a real, common Firestore rules
+  mistake worth naming even though it was avoided here.
+- `entitlements/{userId}`: read your own, write none — not even the
+  owner. CLAUDE.md is explicit that only a Cloud Function's Admin SDK
+  write (which bypasses these rules entirely) is ever trusted; task 3.4
+  is what will actually perform that write, later.
+
+Added `firebase-tools`, `@firebase/rules-unit-testing`, and `firebase`
+itself as devDependencies (the last one explicitly, not left to hoist in
+as a transitive dependency of the testing package, since the test script
+imports its modular Firestore functions directly), plus `firebase.json`
+and `.firebaserc` for the emulator config.
+
+Verified with a new `scripts/firestore-rules-test.mjs` — 16 checks run
+against the actual local Firestore emulator (`firebase emulators:exec
+--only firestore 'npm run test:rules'`), not a rules simulator or a
+read of the `.rules` file's syntax: public read of a user profile,
+self-write allowed, cross-user write denied, unauthenticated write
+denied; project create allowed with yourself as owner and denied with a
+spoofed `ownerId`, read/update/delete allowed for the owner and denied
+for anyone else; entitlement read allowed for the owner and denied for
+anyone else, write denied for everyone including the owner. All 16 pass.
+This task touches no application code — `tsc`, `lint`, `build`, and all
+131 unit tests are unaffected and still clean.
+
+### 2026-09-11 — Task 2.10 (new): wet-stroke staging surface
+
+Third of the three things the owner asked for in one go (layers panel,
+starting Firebase, drawing-engine debt) — this is the engine debt, and
+specifically the wet-stroke staging surface half of it, not pigment-mix
+blending itself (see below for why that split).
+
+Since task 2.6, non-erase stamps have painted straight onto the
+permanent cel as they arrived — a documented, deliberate simplification,
+but a real one: it meant no pigment-mix blending for the one `brush.ts`
+preset that wants it (Watercolor), no "cancel this stroke" gesture, and
+undo (task 2.8) having to read back the whole cel at `beginStroke` because
+there was no untouched surface to read a precise dirty rect from later.
+This closes the structural half of that gap the way Trace itself does:
+stamps for a non-erase stroke now land on `renderer.scratch('wetStroke')`
+for the whole stroke, composited live on top of the active layer's own
+cel for the canvas preview, and only `drawOver`'d onto the permanent cel
+once, at `endStroke`.
+
+`Renderer.renderDocumentFrame` gained an optional `wetOverlay` param
+(`{layerId, surface}`), threaded into `rasterizeLayer`: when it names the
+layer currently being rasterized, that layer's cel — or a blank scratch
+surface, if the layer doesn't have a cel yet at all — gets the wet
+surface `drawOver`'d onto it before taking part in the rest of the
+composite. The "layer has no cel yet" case matters on its own: a brand
+new layer's very first stroke needs to preview live before `endStroke`
+ever creates a permanent cel for it, so `rasterizeLayer` checks for the
+overlay even when there's no cel to check against. Both existing
+`copy`/`drawOver` primitives were enough for this — no new shader needed.
+
+Erase deliberately does NOT go through the wet surface. Erasing uses
+`blendFunc(ZERO, ONE_MINUS_SRC_ALPHA)` to subtract from whatever's
+already there; routed through an initially-transparent wet surface, it
+would have nothing to subtract from, and merging that empty result back
+with a normal `drawOver` would silently cancel the whole gesture. Erase
+stamps still go straight onto the permanent cel, exactly as before this
+task, and keep the older whole-cel-snapshot-at-`beginStroke` undo
+approach, since there's still no untouched pre-stroke surface for the
+erase path to read from later.
+
+A real, welcome side effect of the split: a non-erase stroke's undo
+"before" snapshot can now be read at `endStroke`, right before the merge,
+instead of reading the whole cel up front the way task 2.8 had to — task
+2.8's own checkpoint entry named this exact limitation as a consequence
+of not having a wet layer yet, so it's worth confirming it's actually
+fixed now, for that half of the strokes at least.
+
+Whether merging N stamps' wet-surface result in one `drawOver` produces
+the same pixels as painting those N stamps directly onto the cel in
+sequence isn't just assumed — premultiplied-alpha "over" compositing is
+associative, so the two are mathematically identical, and every
+pre-existing Playwright smoke test's pixel values came back essentially
+unchanged after this change (not just their pass/fail status), which is
+the empirical confirmation of that math actually holding here.
+
+Pigment-mix blending itself (`BrushPreset.pigmentMix`, `gl/shaders.ts`'s
+own header comment already flagged `MIX_FS` as intentionally unbuilt)
+is still NOT implemented — this task deliberately only builds the
+staging surface a future `MIX_FS` merge pass would need, since inventing
+that shader's actual blend math without any reference implementation to
+port from (Trace's own shader source isn't available in this session)
+is a separate, riskier piece of work than the structural plumbing.
+Watercolor's `pigmentMix: 0.15` still has no visible effect, same as
+before — noted here so the scope split is explicit, not silently implied
+as "done."
+
+Verified with a new `scripts/wet-stroke-smoke.mjs` (Playwright): a
+brand-new layer with no cel previews a stroke live before pointer-up,
+and genuinely has no permanent cel mid-stroke (only the wet surface
+does); the stroke stays visible through the merge; the permanent cel
+gets created exactly at merge time; the eraser is confirmed to still
+touch the permanent cel mid-stroke, unaffected by any of this. All six
+prior Playwright smoke tests re-verified with no regressions and,
+notably, near-identical reported pixel values to their previous runs;
+131 unit tests, `tsc`, `lint`, and `build` all clean.
+
+### 2026-09-11 — Task 2.9 (new): layers panel
+
+Owner asked for three things in one go: a layers panel, starting Firebase
+(phase 3), and addressing the drawing engine's own known debts (wet-stroke
+staging, pigment-mix blending). Taking them in that order — this entry is
+the first. The multi-layer document model has existed since task 2.1, and
+bucket fill's reference-layer behavior (task 2.7) already proved the
+engine handles more than one layer correctly, but there was never an
+actual UI to add a second layer, switch which one is active, or do
+anything else layer-related — `setActiveLayer` only ever got called by a
+test harness. This closes that gap.
+
+`Engine` gained `addLayer`, `removeLayer`, `moveLayer`, `setLayerVisible`,
+`setLayerLocked`, and `renameLayer`. `addLayer` is `'draw'`-only on
+purpose — a camera layer's cels only ever come from the capture UI's
+shutter (task 2.3, still blocked on device verification per CLAUDE.md),
+so there's nothing a panel button could meaningfully add for that kind
+yet. `removeLayer` calls `renderer.release()` on each of the removed
+layer's cel surfaces immediately: unlike a stroke or fill (task 2.8),
+layer removal has no undo, so nothing can still need that GPU texture
+afterward. Deliberately no undo at all for any structural layer operation
+(add/remove/reorder/rename/visibility/lock) — a bare layer has no pixels
+for undo to restore, and wiring `Command`-based undo onto array splices
+that hold GPU-backed `Layer` objects would reopen exactly the disposal-
+timing question `removeLayer`'s immediate `release()` call was added to
+sidestep in the first place. Worth naming plainly: this doesn't fix a
+real gap that already exists elsewhere — a stroke or fill's undo-tracked
+`created` cel keeps its `Surface` reachable for a possible `redo()`, but
+nothing ever calls `release()` on it once `History`'s own `MAX_STEPS`/
+`MAX_BYTES` trimming drops that command for good. That's a pre-existing
+leak from tasks 2.6-2.8, not introduced here, and still open — noted so
+it isn't lost, not something this task's scope covers.
+
+This is also the point `gl/engine.ts`'s own header comment has been
+deferring since task 2.6: CLAUDE.md documents a `touch()` → bump revision
+→ `subscribe()` pattern for exactly the situation where "a second UI
+consumer needs to react to document mutations outside React's own state
+flow" — and the layers panel is the first thing that's actually true for.
+Added it now, but `touch()` lives inside `renderAndPresent()` itself
+(called at the end of every mutation already, strokes and fills and Clear
+and undo/redo included) rather than being a separate call every mutator
+has to remember to make.
+
+Building the panel surfaced a real bug outside the panel's own code:
+`Engine.beginStroke` never checked `layer.locked` or `layer.visible` at
+all — only `floodFill` did (task 2.7). Locking a layer through the new
+panel would have silently done nothing to stop a stroke on it. Fixed by
+giving `beginStroke` the same guard `floodFill` already had, since it
+needed it on its own terms, not only to make the new Lock button work.
+
+New `src/ui/LayersPanel.tsx`: list of layers top-to-bottom (`doc.layers`
+itself is bottom-to-top, reversed only for display), each row showing
+Hide/Show, Lock/Unlock, a double-click-to-rename name field, Move
+Up/Down, and Delete (disabled once only one layer remains), with the
+active layer highlighted and selectable by clicking its row. Subscribes
+to the new `engine.subscribe()` via a plain `useEffect` — safe here,
+unlike `DrawingCanvas`'s own `history` subscription, because
+`LayersPanel` only ever mounts once `DrawingCanvas`'s `ready` flag is
+already true, so there's no first-mount race between the engine's
+creation and the subscription (the exact hazard task 2.8 worked around
+by subscribing inside the same effect instead).
+
+Verified with a new `scripts/layers-smoke.mjs` (Playwright): starting
+state; add-layer making the new layer active; clicking a row to switch
+the active layer; a stroke landing on whichever layer is active; rename;
+hide/show actually removing/restoring a layer from the composite (not
+just toggling a flag nothing reads); lock genuinely blocking a stroke;
+reorder changing composite stacking order; delete removing a layer and
+being refused once only one remains, checked both via the disabled
+button and by calling `removeLayer()` directly. All five prior Playwright
+smoke tests re-verified alongside this one with no regressions; 131 unit
+tests, `tsc`, `lint`, and `build` all clean.
+
+### 2026-09-11 — Task 2.8 (new): undo/redo for strokes, bucket fills, and Clear
+
+Owner picked this over a layers panel or another pass at device
+verification as the next task. Wired the already-ported `core/history.ts`
+(task 2.1 — `History`/`Command`, sitting unused since it landed) into
+`gl/engine.ts`, which up to now had no undo at all (a deliberate
+simplification flagged in both 2.6 and 2.7's checkpoint entries).
+
+Three actions needed three different shapes of `Command`, because this
+engine (task 2.6) draws strokes straight onto the permanent cel instead
+of onto a wet staging surface the way Trace does:
+
+- **Stroke**: `beginStroke` reads the whole active cel back once, before
+  any stamp lands, and keeps it in memory only for the duration of the
+  stroke. Each stamp expands a running dirty rect (`expandRect`, same
+  padding Trace uses). At `endStroke`, only that dirty sub-rect's
+  before/after pixels get kept in the `Command` (via `extractRect`) — the
+  full-cel snapshot itself is discarded once the rect is known, so undo
+  memory stays proportional to what actually changed, not to canvas size.
+  This is coarser than Trace's own undo, which can snapshot precisely the
+  stroke's dirty rect from the very start because the wet layer keeps the
+  pre-stroke pixels untouched underneath while drawing happens elsewhere;
+  without that staging surface there's no untouched copy to read a
+  precise rect from mid-stroke, so the whole cel has to be read up front
+  instead. A real, accepted cost of that earlier simplification, not new
+  debt introduced here. `history.push()` is used (not `run()`) since the
+  stroke has already executed live by the time `endStroke` runs.
+- **Bucket fill**: `history.run()` instead, since the fill hasn't executed
+  at all until the command's own `redo()` is called for the first time —
+  the before/after pixels come from the flood worker's own returned
+  sub-rect, reusing the same `extractRect` helper.
+- **Clear**: the simple case, a full-cel before/after snapshot.
+
+All three route through `ensureCel`'s `{cel, created}` return (mirroring
+Trace's own pattern) so that undoing the action that created a layer's
+very first cel removes the cel entirely, rather than leaving an empty one
+behind.
+
+UI: Undo/Redo buttons in `DrawingCanvas.tsx` show the pending command's
+label (`history.undoLabel`/`redoLabel`) and disable when there's nothing
+to do; Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z, and Ctrl+Y are wired as global
+keyboard shortcuts, guarded against firing while a form control has
+focus. Subscribing to `history` deliberately avoids `useSyncExternalStore`
+here: its internal subscribe effect can run before a separate effect that
+creates the subscribable object, silently missing the subscription on
+first mount if the `Engine` and the subscription are created in different
+effects. Fixed by subscribing to `engine.history` inside the exact same
+`useEffect` that constructs the `Engine`, forcing re-renders with a plain
+`useState` counter instead.
+
+Two bugs caught before they shipped:
+- A no-op ternary in `endStroke`'s label logic — it read `this.strokeBrush`
+  to decide the label AFTER already setting `this.strokeBrush = null` a
+  few lines above, so the ternary always took its false branch. Caught by
+  re-reading the method, fixed by capturing the label into a local
+  constant before nulling the field.
+- `runFloodFillWorker` transfers `target.buffer` via `postMessage`'s
+  zero-copy transfer list, which detaches it on the sending side —
+  `floodFill`'s undo needs `target`'s pre-fill pixels, so `target.slice()`
+  has to happen BEFORE the transfer, not after. Caught by reasoning about
+  transfer semantics ahead of time, not by a failing test.
+
+Verified with a new `scripts/undo-smoke.mjs` (Playwright): real
+pointer-drawn strokes (not synthetic `Stamp` arrays), a real bucket fill,
+and the Clear button, each undone and redone through the actual UI —
+buttons and keyboard shortcuts alike. Covers: nothing to undo before any
+drawing; a stroke undone (button) and redone (keyboard); two strokes
+undoing independently in the right order; drawing after an undo discarding
+the redo stack; Clear undone back to the prior drawing; a bucket fill
+undone and redone with the right color/blank state at each step.
+
+Building the test surfaced a measurement issue, not a product bug: the
+'marker' brush preset used for these checks is a chisel tip (`aspect:
+0.35` in `core/brush.ts`), so its actual cross-stroke width is
+`size(28) * aspect` ≈ 9.8px, not the full 28px diameter assumed at first —
+a wide averaging box centered on the stroke was diluting that thin line's
+darkness into a false "not visible" reading on presence checks. Confirmed
+by scanning actual rendered pixels directly rather than guessing, then
+fixed the same way `bucket-smoke.mjs` already handles thin ink (e.g. its
+check that the fineliner outline itself is untouched by a fill): shrink
+the sampling window so it fits inside the known stroke width, but only for
+*presence* checks — checks for blank paper keep the wider window since an
+empty area stays reliably blank regardless of box size.
+
+All four prior Playwright smoke tests (`renderer-smoke`, `persistence-smoke`,
+`drawing-smoke`, `bucket-smoke`) re-run alongside this one with no
+regressions. `npx tsc -b --noEmit`, `npm run lint`, `npm run build`, and
+`npm test` (131/131) all clean.
+
+### 2026-09-10 — Task 2.7 (new): bucket fill — tolerance, edge expansion, real gap closure, reference-layer fill
+
+Owner brought two feature ideas from a reference video (a smart bucket
+tool, and an audio timeline), both written up as prompts addressed to
+"Trace." Confirmed they were meant for Clumsyloop, then split the
+decision in two rather than building either one blind: bucket fill fits
+what CLAUDE.md already says this app draws (dialogue bubbles, illustrated
+backgrounds — flat-color fills are exactly that workflow); an audio
+timeline doesn't — `document.ts` already cut `AudioTrack` from v1 scope on
+purpose, and there's no multi-frame timeline UI in Clumsyloop at all yet
+for anything to scrub across. Owner chose to build both anyway; this
+entry covers the bucket tool. The audio timeline is real, larger, blocked
+work of its own — not started this session, flagged here so intent isn't
+lost.
+
+Read Trace's actual shipped implementation before porting anything
+(`core/flood.ts`, `workers/floodFill.worker.ts`, and `Engine.floodFill`'s
+call site) rather than assuming the reference video's feature list maps
+1:1 onto what Trace has. It didn't: Trace's own bucket tool only has
+tolerance + edge expansion/bleed (`growFilled`, which grows the FILLED
+region after the scanline fill already ran) — no actual gap closure.
+A real break in the line still leaks a plain tolerance flood right
+through it in Trace today. Since gap closure was one of the two features
+the owner explicitly asked for, shipping only tolerance+bleed here would
+have quietly under-delivered while looking complete. Built it for real
+instead:
+
+- `buildWallMask` — the exact inverse of `floodMatch`'s per-pixel
+  tolerance test: 1 where a pixel differs from the seed color by more
+  than tolerance (a "wall" the fill can't cross), 0 where it can.
+- `closeGaps` — a genuine morphological close (iterated 3x3 dilate, then
+  the same count of 3x3 erode passes) on that wall mask, bridging breaks
+  up to about `2*radius` pixels without permanently widening the wall
+  anywhere a gap didn't need bridging. Same "iterate a 1px-radius
+  operation `n` times instead of a bigger kernel" style `growFilled`
+  already uses, for consistency.
+- `floodOpenMask` — the same scanline algorithm as `floodMatch` (pulled
+  out into a shared `scanlineFill` so both share one tested core), but
+  flooding over the closed wall mask instead of re-testing color per pixel.
+
+This is a real pipeline addition beyond what Trace ships, not a redesign
+of what got ported — `floodMatch`/`growFilled`/`applyFillColor`/`extractRect`
+are otherwise verbatim ports (English comments only), same exception
+`brush.ts`/`palettes.ts` already have.
+
+`gl/renderer.ts` gained `writeRect` (sub-rectangle GPU write-back,
+`readRect`'s missing other half — needed since a fill only ever touches
+a small bounding box, not the whole cel). `workers/floodFill.worker.ts`
+runs the whole wall→close→flood→grow→paint pipeline off the main thread,
+same reasoning Trace's version gives (CPU-heavy, no WebGL/DOM needed,
+doesn't want to share the GPU context). `gl/engine.ts` gained `floodFill`:
+reference = the whole composited document at the current frame (any
+visible layer's ink bounds the fill, not just the active layer's own
+cel — the reference-layer-fill behavior); the write always goes to the
+active layer's cel. No-op on a locked/hidden/non-`draw` layer, no undo —
+consistent with how strokes already work in this engine (see 2.6).
+
+`Engine.activeLayerId` was `readonly` since task 2.6 — changed to a
+getter + new `setActiveLayer()` method, purely so reference-layer fill
+had any way to be exercised at all: `DrawingCanvas` still only ever
+creates one fixed layer (no layers panel yet), so a person can't actually
+reach this behavior through the UI today. Named honestly rather than
+quietly left implicit — the engine is correct, there's just no UI yet
+that lets two layers coexist.
+
+New `state/tool.ts` field: `mode: 'draw' | 'bucket'`. `DrawingCanvas.tsx`
+gained a Draw/Bucket toggle and three sliders (tolerance, expand, gap
+closure) — a bucket tap doesn't set pointer capture or track a drag,
+just fires `floodFill` once.
+
+Verification: 11 new tests in `core/flood.test.ts` (the refactored
+`floodMatch` re-checked unchanged; `buildWallMask`/`closeGaps`/
+`floodOpenMask` proven directly — a synthetic ring with a real 1px gap
+leaks with a plain tolerance flood and is correctly contained once
+`closeGaps` runs first). `npm test` is 131/131.
+
+The browser-level verification (`scripts/bucket-smoke.mjs`, Playwright)
+surfaced two real bugs along the way, neither one in the flood-fill code
+itself:
+
+1. **The UI's fill is fire-and-forget.** `DrawingCanvas`'s click handler
+   calls `void engine.floodFill(...)` without awaiting it (a Worker round
+   trip), so a plain `page.mouse.click()` returns long before the fill
+   lands. Checking pixels immediately produced nonsense (a fill from one
+   test appearing to leak into a LATER test's region, once it finally
+   resolved). Fixed the test by polling the filled cel's own
+   `surface.version` (bumped by `writeRect`) instead of checking
+   immediately or guessing a sleep duration.
+2. **The brush engine's One Euro smoothing filter has genuine
+   steady-state lag behind constant-velocity motion** — confirmed
+   directly, bypassing Playwright entirely, by calling
+   `engine.beginStroke`/`pushStroke`/`endStroke` with dense synthetic
+   samples along a straight line: the drawn line stopped several pixels
+   short of the declared endpoint regardless of sample density, only
+   fixed by adding samples that "dwell" at the target instead of adding
+   more samples in transit. This is expected, correct behavior for a
+   low-pass filter smoothing pointer input (ported verbatim from
+   Trace, "battle-tested" per CLAUDE.md) — a real hand naturally slows
+   down at the end of a stroke; a scripted drag that stops moving the
+   instant it arrives doesn't. Fixed the test's `dragStroke` helper to
+   dwell at each stroke's endpoint, not the brush engine.
+
+A third issue was a plain test-authoring mistake, not a finding: an early
+draft of the gap-closure rectangle used `x` coordinates up to 420 on a
+360px-wide document — silently drew nothing there at all. Caught by
+scanning the actual rendered pixels directly rather than trusting the
+coordinates on paper.
+
+`scripts/bucket-smoke.mjs` re-runs `renderer-smoke`/`persistence-smoke`/
+`drawing-smoke` alongside it each time it was iterated on — all four
+Playwright smoke tests pass together, re-run twice for the new one to
+rule out flakiness. `npm run build`/`lint`/`test` all clean.
+
+**Marked 2.7 `done`** in `tasks.json`.
+
+---
+
+### 2026-09-09 — Task 2.6 (new): the drawing UI — brush.ts and palettes.ts finally have a consumer
+
+Asked what else to build while phase 1 stays blocked on device access.
+Offered three camera-independent options (Firestore rules, the web half
+of export, the drawing UI); owner picked the drawing UI — the actual
+product differentiator, not backend or export plumbing, and the one that
+turns two already-ported-but-unused pieces (`core/brush.ts`,
+`state/palettes.ts`) into something a person can actually use. Added as
+task 2.6 in `tasks.json` since it wasn't itemized there originally — the
+2.1 checkpoint entry from 2026-08-16 already flagged `brush.ts` as
+"groundwork for whichever future task actually builds the drawing UI,"
+so this fills that named gap rather than inventing new scope unprompted.
+
+New `gl/engine.ts` — deliberately NOT a port of Trace's `core/engine.ts`.
+Trace's engine carries revision/`touch()`/subscribe pub-sub (the pattern
+`CLAUDE.md`'s architecture section already documents) because many
+independent UI pieces there — layers panel, undo button, timeline — all
+react to document mutations outside React's own state flow. Clumsyloop's
+engine has exactly one consumer so far, the canvas itself, and it updates
+imperatively (`renderAndPresent()`, called directly after every stroke
+mutation) — no second listener exists yet to justify the pub-sub
+machinery. Documented as the reason to add it on `Engine` itself, for
+whoever builds the first thing (a layers panel, a frame counter) that
+actually needs it. Also NOT ported: Trace's wet-stroke staging surface
+(a stroke there lives on a scratch surface until pointer-up, needed for
+pigment-mix blending and a "cancel this stroke" gesture) — here, stamps
+go straight onto the permanent cel as they arrive. Real, named
+consequence: the one `brush.ts` preset that wants pigment-mix blending
+("Watercolor", `pigmentMix: 0.15`) paints correctly shaped/colored
+stamps but without the subtractive-mix merge Trace's `mixOver` gives it.
+No undo yet either — `history.ts` exists but isn't wired to the engine.
+Single fixed "Ink" draw layer, single frame (frame 0) — no timeline, no
+camera layer; those need the capture UI (task 2.3), still blocked.
+
+`Renderer.drawStamps` (task 2.2) gained an `erase` parameter — `brush.ts`
+ported two eraser-category presets back in the 2.1 pass, but nothing had
+ever exercised that code path since drawStamps only ever did plain
+src-over accumulation. Erase mode switches to
+`blendFunc(ZERO, ONE_MINUS_SRC_ALPHA)`, same trick `drawOver`'s existing
+`erase` parameter already uses — the stamp's alpha coverage still comes
+from the same shader, only the destination blend changes.
+
+New `state/tool.ts` (active brush id + color, Zustand) — same "split out
+because Trace's `store.ts` mixes this with panel/quick-shape/rig state
+Clumsyloop doesn't have" reasoning `palettes.ts`'s own header comment
+already gives. New `ui/DrawingCanvas.tsx` wires pointer events to the
+engine: tilt→altitude/azimuth conversion and the mouse/pen pressure
+default are ported directly from Trace's `ui/CanvasView.tsx`
+(`tiltToSpherical`) rather than re-derived, since `brush.ts`'s tilt-aspect
+math expects that exact convention. Brush picker groups `DEFAULT_BRUSHES`
+by `BRUSH_CATEGORIES`; color picker reads `usePalettes`'s curated
+`paletteGroups` plus a native `<input type="color">` for anything outside
+the curated set. Mounted above the existing camera/renderer/persistence
+harnesses in `App.tsx` — it's real product UI now, not one more manual
+test harness, so it leads the page instead of stacking at the bottom.
+
+Verified with real pointer events, not synthetic `Stamp[]` arrays (unlike
+`renderer-smoke.mjs`): a new `scripts/drawing-smoke.mjs` drags the mouse
+across the actual on-screen canvas and reads back the result via
+`renderer.toImageData()`. First pass measured a plain average over a
+40×40 box around the stroke and got a false failure — a 6px-diameter
+pencil line only covers a sliver of a box that size, so the average
+washes out close to white even though the stroke drew correctly (checked
+directly: dark ink was there, at R=41). Fixed by scanning for the
+darkest pixel in a band around the expected line instead of averaging —
+answers "is there ink here" without needing to know the exact line
+width or pixel-perfect position. Confirms: a stroke draws visible dark
+ink; switching color mid-session changes the next stroke's color while
+leaving the earlier stroke byte-for-byte unchanged; the eraser brush
+removes ink instead of adding color; Clear resets the layer. All three
+Playwright smoke tests (`test:renderer-smoke`, `test:persistence-smoke`,
+`test:drawing-smoke`) pass together, confirming no regressions.
+
+`npm run build`/`lint`/`test` all clean (120/120 unit tests, unchanged —
+this task's logic is pointer-driven, not unit-testable the way pure
+`core/` modules are, same reasoning `document.test.ts` already gives for
+deferring `Surface`-touching behavior to browser verification).
+
+**Marked 2.6 `done`** in `tasks.json`.
+
+---
+
+### 2026-09-08 — Task 2.5: local project persistence (save/resume, IndexedDB)
+
+Owner asked to keep pushing the engine forward while phase 1's device
+verification stays blocked, same reasoning as 2.1/2.2 — this time
+targeting 2.4/2.5 specifically to steer clear of anything camera-coupled.
+2.4 (native `.mp4` export via AVFoundation/Swift) shares phase 1's actual
+limitation — this environment can write Swift but can't build or run it —
+so only 2.5 got built. Before touching code, asked the owner one real
+architecture question `RUMBO.md`/`CLAUDE.md` didn't settle: IndexedDB
+(Trace's own approach, no new dependency) vs. Capacitor's Filesystem
+plugin (more reliable for "hundreds of photos" surviving force-quit on a
+device with little space, per RUMBO.md's own stated business risk, but a
+new native dependency this session can't verify on hardware). Owner chose
+IndexedDB to start.
+
+Split three ways, matching CLAUDE.md's "`gl/` is the sole point of
+contact with WebGL" literally rather than the way Trace's own `io.ts`
+does (Trace's `io.ts` calls `engine.renderer.toImageData()` directly):
+
+- `core/io.ts` — pure: JSON-safe document/layer/transform metadata
+  (de)serialization, and PNG encode/decode via `upng-js` (new
+  dependency). Chose `upng-js` over Trace's `canvas.toBlob()` specifically
+  so this file gets real `npm test` coverage (no DOM canvas under Node) —
+  already the library RUMBO.md's known-debts note pointed at for exactly
+  this task, not a fresh choice made now. Found a real bug in
+  `upng-js@2.1.0` along the way: with `cnum=0`, `encode()` still
+  auto-selects palette mode (ctype 3) whenever a frame has ≤256 unique
+  colors, and this version's `decode()`/`toRGBA8()` crashes on its own
+  palette output (`out.data` comes back `undefined` — confirmed against a
+  bare encode/decode round trip with nothing else involved). Worked around
+  by passing `forbidPlte: true` — encode's 6th argument, present in the
+  actual library but missing from `@types/upng-js`'s declarations, so
+  `core/io.ts` casts a narrow local type for just that call rather than
+  reaching for `any`. Forcing truecolor+alpha this way is also just
+  correct for this project regardless of the bug: a flat-colored drawn
+  cel is exactly the kind of content that would trip ≤256-color palette
+  selection, and lossless round-tripping matters more here than the
+  handful of bytes palette mode would have saved.
+- `gl/projectIO.ts` — the GPU-facing glue `core/io.ts` can't own:
+  `captureProject` reads every non-empty cel's pixels off the GPU
+  (`renderer.toImageData`) and hands them to `core/io.ts` to encode;
+  `restoreProject` decodes each saved PNG and uploads it into a freshly
+  created `Surface` via a new `Renderer.uploadPixels` method (raw-pixel
+  sibling to task 2.2's `uploadImage`, added here since decoded PNG bytes
+  aren't an `ImageBitmap`/canvas — premultiplies in JS rather than
+  trusting `UNPACK_PREMULTIPLY_ALPHA_WEBGL` for a raw `ArrayBufferView`
+  source, which isn't as clearly specified as it is for an image source).
+- `state/projectStore.ts` — IndexedDB, a single key-value object store
+  keyed by project id, same shape as Trace's autosave. Degrades to a
+  no-op when `indexedDB` isn't available, same guard `palettes.ts`
+  already established for `localStorage` under Node. Cels stored as
+  `[celId, bytes][]` pairs rather than a `Map` directly — `Map` is
+  structured-cloneable in IndexedDB on modern engines, but that can't be
+  confirmed on an actual WKWebView from this environment, so this sticks
+  to a shape IndexedDB has always supported instead of assuming.
+
+No history persistence, no zip container, no bone rigs/masks/text/
+adjustment/audio/custom-texture export — none of that exists in
+Clumsyloop yet or is in v1 scope; the acceptance criteria is "frame by
+frame, exactly as it was" for frames + layers + metadata, not the undo
+stack.
+
+Verification: `core/io.test.ts` (9 new tests — metadata round-trip
+including transform keyframes, cel placements flattened with no
+`Surface` attached, PNG round-trip including the palette-bug regression
+case) runs under plain `npm test`, no browser needed — `npm test` is
+120/120 now. The GPU + IndexedDB path needs a real browser (this
+environment has no physical device either — see `CLAUDE.md`), so it's
+verified the same way task 2.2 was: a `PersistenceHarness` component
+(`window.__clumsyloopPersistence`) builds a two-frame camera layer + one
+draw layer, saves it, and a new `scripts/persistence-smoke.mjs`
+(Playwright + SwiftShader, `npm run test:persistence-smoke`) drives a
+full page reload — the closest proxy this environment has for "force-quit
+and relaunch" (IndexedDB and `localStorage` both survive it the same way
+they survive a real force-quit, unlike JS/WebGL state) — and confirms
+every field and every composited pixel survives.
+
+Getting that smoke test green surfaced two real bugs worth calling out,
+not just the upng-js one above:
+
+1. **A race in the test setup, not the app**: clearing IndexedDB/localStorage
+   right after `page.goto`'s `networkidle` fires still raced against the
+   *first* page load's own in-flight async save — its tail end would
+   overwrite the just-cleared `localStorage` flag a moment later.
+   `networkidle` resolves long before IndexedDB writes finish; fixed by
+   waiting for the harness's own "I'm done" signal before clearing
+   anything, not a fixed delay.
+2. **A real aliasing bug in `Renderer.renderDocumentFrame` (task 2.2)**:
+   its returned surface is one of the renderer's own reused scratch
+   buffers. Rendering frame 0 then frame 6 back to back and holding both
+   return values looked fine until frame 6's render silently overwrote
+   frame 0's — both calls' clip-group count gives the ping-pong pool the
+   same parity, so they alias the same physical surface. Not a 2.5 bug,
+   but 2.5 is the first caller that ever needed two rendered frames alive
+   at once, which is exactly why 2.2's own smoke test never caught it.
+   Fixed by copying each frame's result into its own dedicated surface
+   immediately (`PersistenceHarness`'s `renderBothFrames` helper) and
+   documented the aliasing contract directly on `renderDocumentFrame`
+   itself so the next caller doesn't rediscover it the same way.
+   `test:renderer-smoke` still passes unchanged — that harness only ever
+   rendered one frame, so it was never exposed to this.
+
+`npm run build`/`lint`/`test` all clean; `test:renderer-smoke` and the
+new `test:persistence-smoke` both green, re-run twice to rule out
+flakiness in the reload-based verification.
+
+**Marked 2.5 `done`** in `tasks.json`, ahead of 2.3 per the same explicit
+early-start exception 2.1/2.2 used. 2.4 (export) is still `pending` —
+that one's blocked on the same device access phase 1 is.
+
+---
+
+### 2026-09-07 — Task 2.2: WebGL2 renderer, compositing camera frame + drawn layers
+
+Built `gl/shaders.ts` and replaced the `gl/renderer.ts` stub (which so far
+only had the `Surface` type, for `document.ts`'s type-only dependency)
+with a real `Renderer`. Ported from Trace's `gl/renderer.ts`/`shaders.ts`
+(same owner, in this session's repo scope), trimmed hard — all cuts
+listed and reasoned about in `renderer.ts`'s own header comment, not just
+here: no GPU texture residency budget/eviction/CPU backing (Trace counts
+texture bytes because a rig-heavy project keeps dozens of surfaces alive;
+Clumsyloop's real memory question is different — a stop-motion project is
+"hundreds of photos" per RUMBO.md, each a full-document camera Cel — but
+building an eviction pool now, before task 2.3's capture UI exists to
+generate real frame counts to profile against, would be guessing at a
+solution before the problem's actual shape is known; flagged as a debt,
+likely lands in 2.3 or 2.4), no mesh skinning/rig, no adjustment layers,
+no selection outline, no pigment-mix wet blending (one ported `brush.ts`
+preset, "Watercolor", sets `pigmentMix: 0.15` — `drawStamps` still paints
+its stamps correctly, just without the subtractive-mix merge pass, which
+is the future drawing UI's job, not this renderer's), no thumbnail
+downscaling (task 2.3, "filmstrip thumbnail strip", is the first actual
+caller — building it now with nothing to verify against risks getting the
+ink-bounds cropping subtly wrong unnoticed). Kept in full, not trimmed:
+all 13 `BlendMode`s and brush stamping (`drawStamps` + `getBrushTexture`),
+since `types.ts` and the already-ported `brush.ts` commit to both.
+
+Redesigned the `Surface` stub along the way — it was only a placeholder
+interface (`{width, height, texture, version}`), never used by any real
+code, so nothing outside `renderer.ts` depended on its shape (confirmed:
+`document.ts` only imports it as a type, and `document.test.ts` already
+avoids touching `.surface` by design). The new `Surface` is a class
+holding a texture + FBO, matching Trace's invariant that every surface is
+exactly document-sized — no per-surface width/height. That means a
+captured photo has to already be sized to the document before it becomes
+a camera Cel; the resize step itself is capture-UI glue, task 2.3's job.
+
+Added a document-level composition entry point, `Renderer.renderDocumentFrame(doc, frame)`,
+that Trace itself keeps in a separate `engine.ts` rather than
+`renderer.ts` — folded into this file instead since Clumsyloop doesn't
+have an `engine.ts` yet and task 2.2 in `tasks.json` only names
+`renderer.ts`; splitting one out now, with no second caller yet to
+justify the boundary, would be the premature-abstraction mistake the
+project is trying to avoid elsewhere. Ported and trimmed from Trace's
+`engine.ts` `compositeGroups`/`rasterizeLayer` (clip groups resolved
+against their base layer, then composited onto the accumulator bottom to
+top) — with no wet-stroke live-compositing, no onion-skin ping-pong, no
+active-layer cache-boundary optimization, since none of those exist here
+yet. Layer transforms (`TransformTrack`, kept in `document.ts` for future
+effects/dialogue-bubble animation) are honored via the same
+rotate/scale-about-center matrix Trace hand-rolls, reproduced here instead
+by composing two existing `math.ts` helpers (`mat3FromTRS` + `mat3Multiply`)
+— confirmed algebraically equivalent before using it, rather than hand-rolling
+a third copy of the same arithmetic.
+
+Visual verification (this environment has no physical device, same as
+phase 1 — see `CLAUDE.md`) done headlessly: a new `ui/RendererHarness.tsx`
+component builds a tiny synthetic document (one camera Cel — a
+four-quadrant synthetic "photo", standing in for
+`CameraCapture.capturePhoto()`, chosen specifically because a solid-color
+photo can't catch an orientation flip — plus one draw Cel, a real
+`StrokeBuilder`-generated pencil stroke) and composites it, exposing
+`window.__clumsyloop` for scripting. `scripts/renderer-smoke.mjs`
+(Playwright + SwiftShader, `npm run test:renderer-smoke`, new devDependency
+`playwright` at Trace's same pinned version) drives it and reads back with
+`renderer.toImageData()` rather than screenshotting the live canvas — the
+same `preserveDrawingBuffer: false` trap Trace's `CLAUDE.md` documents
+(a canvas screenshot can lag a frame behind; `readPixels` doesn't). All
+checks pass: every quadrant keeps its own color (no orientation flip),
+the stroke reads clearly darker than the photo underneath it (compositing
+works), and the area just beside the stroke matches the plain photo color
+with no dark fringe (no color-halo bug from a premultiplication mistake).
+A screenshot taken the same way, for human eyeballing, confirms the same.
+
+Mounted `RendererHarness` into `App.tsx` below the existing phase-1
+camera-plugin buttons, matching that file's own framing
+("manual test harness ... not the real capture UI") rather than starting
+a second entry point for one more manual test.
+
+`npm run build`, `npm run lint`, and `npm test` (111/111, unchanged) all
+pass clean; `npm run test:renderer-smoke` needs `npm run dev` running
+separately, same convention as Trace's own Playwright scripts.
+
+**Marked 2.2 `done`** in `tasks.json`.
+
+---
+
 ### 2026-08-16 (later once more) — Ported brush.ts, brushTexture.ts, and the palette system directly
 
 The one explicit exception in `CLAUDE.md`: unlike `document.ts`, these

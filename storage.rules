@@ -1,0 +1,27 @@
+// Firebase Storage security rules for published clips (task 4.1's
+// schema half — see firestore.rules' own header for why this is built
+// ahead of the actual publish/upload UI, which still needs export (2.4)
+// to exist first). Ownership is encoded directly in the object path
+// (`clips/{ownerId}/{clipId}`) rather than custom metadata: simpler to
+// write and test, and it means a client can never even attempt to write
+// under someone else's prefix, whereas metadata-based ownership would
+// need the write rule to separately validate the metadata field itself.
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /clips/{ownerId}/{clipId} {
+      // Publicly readable — the whole point of a published clip is that
+      // anyone can play it back from the feed, same reasoning as
+      // firestore.rules' own `clips` read rule (a hidden clip's Firestore
+      // document already stops it from ever being queried into the
+      // feed, so the underlying file doesn't also need to be hidden —
+      // Apple's takedown requirement is about the clip disappearing from
+      // where anyone would ever encounter it, not the raw file becoming
+      // provably inaccessible to someone already holding a direct link).
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == ownerId;
+      allow delete: if request.auth != null && request.auth.uid == ownerId;
+    }
+  }
+}

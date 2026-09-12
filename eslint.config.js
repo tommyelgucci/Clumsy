@@ -5,7 +5,12 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'ios'] },
+  // `functions/` is a separate, self-contained deployable package (its
+  // own package.json/node_modules, Node/Cloud Functions runtime instead
+  // of the browser) with its own lint step (`npm --prefix functions run
+  // lint`, currently `tsc --noEmit`) — not this (browser-oriented, React
+  // Hooks-aware) config's concern.
+  { ignores: ['dist', 'ios', 'functions'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],

@@ -12,13 +12,36 @@ technical risk**, not the easy part.
 
 ## What Clumsyloop is
 
-Hybrid animation app: frame-by-frame capture with the camera (stop
-motion / claymation) that lets you draw on top, on the same timeline —
-rotoscoping, effects, dialogue bubbles, illustrated backgrounds. The
-differentiator against Stop Motion Studio (the incumbent in the space) is
-exactly that: they have no drawing engine, we do. Audience: short-form
-content creators (TikTok/Reels), not the pure stop-motion hobbyist. See
-`RUMBO.md` for the full reasoning.
+**Correction (2026-09-11): this section previously said Clumsyloop was a
+short-form, TikTok/Reels-only, vertical-video app with drawing as a
+bolt-on to stop-motion. That was wrong — an assumption an earlier session
+introduced and never should have carried forward as fact. It shaped real
+decisions (the document's default canvas size, task priorities, at least
+one feature explicitly rejected for "not matching the product's
+identity") that this correction now reopens. See `RUMBO.md`'s
+differentiator section and known-debts list for what's affected.**
+
+General-purpose 2D animation app, not a short-form-only tool: frame-by-
+frame drawn animation, with camera capture (stop motion / claymation) as
+**one input source among several** on the same timeline, not the reason
+the app exists. Usable for TikTok/Reels clips, YouTube cartoons,
+traditional hand-drawn animation, motion graphics, and easier stop-motion
+— whatever the project calls for. Ships as an iOS/iPadOS app (see
+`RUMBO.md`'s platform section — that distribution decision is separate
+from this correction and unchanged); the web build used for local
+development also renders responsively on iPad and desktop browser
+widths, since that's the easiest way to preview UI work without opening
+Xcode, not because desktop is a shipping target.
+
+The bar is the real competitive set for iPad/mobile 2D animation, not
+just Stop Motion Studio: Procreate Dreams, ToonSquid, Clip Studio Paint,
+Callipeg, RoughAnimator. Clumsyloop's job is to be **easier to pick up
+than any of them** while covering what they're each individually good
+at — onion skinning, keyframe/rig-based animation, lasso/shape selection,
+audio import with lip-sync timing, adjustable per-frame FPS, a real
+brush/layer engine — plus one thing none of them do at all: camera
+capture live on the same timeline as drawing. See `RUMBO.md` for the
+full competitive reasoning and what's still missing to close that gap.
 
 Technical engine based on the same pattern as **Trace** (another project
 from the same owner: 2D drawing/animation in WebGL2) — not the same code,

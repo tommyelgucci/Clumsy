@@ -1,0 +1,655 @@
+/*
+ * Visual + layout pass for the drawing screen (tasks 2.11-2.13) — no
+ * engine or behavior changes, purely the app-shell chrome around it. Up
+ * to task 2.11, every button here was unstyled default HTML: work went
+ * into the rendering/brush/undo/layers engine, not the screen around it
+ * (see checkpoint.md's earlier entries).
+ *
+ * Layout structure (task 2.13, replacing 2.12's docked-panel approach):
+ * ported the actual pattern from `tommyelgucci/draw` (Trace, the sibling
+ * project this whole engine is architected after) rather than reinventing
+ * one — `.cl-canvas` is `position: fixed; inset: 0`, filling the entire
+ * screen behind everything else; `.cl-rail--left`/`.cl-rail--top` are
+ * small floating, translucent, blurred toolbars anchored to an edge;
+ * `.cl-panel` (Layers/Brush/Color) is a floating, closeable overlay that
+ * sits OVER the canvas instead of sharing layout space with it. This is
+ * a structural improvement over task 2.12's docked/scrolling panel, not
+ * just a re-skin: the canvas is now always its full natural size — no
+ * flex column/row switching by viewport width, no capped scroll region,
+ * because there's no permanent panel to make room for at all. Color
+ * tokens and the rail/panel look are adapted from Trace's own
+ * `src/styles.css`, independently landing on nearly the same dark
+ * palette Clumsyloop already had from task 2.11 — kept as-is rather than
+ * force an exact match, since the two were already this close.
+ *
+ * Plain CSS, not Tailwind or a component library: this project has no
+ * such dependency yet and one screen doesn't justify adding one. Every
+ * class is prefixed `cl-` to stay out of the way of anything else on
+ * the page (the dev harnesses below this screen keep their own
+ * unstyled look on purpose — see ui/App.tsx).
+ */
+
+.cl-app {
+  --bg: #121214;
+  --surface: #1c1c1f;
+  --surface-2: #26262a;
+  --border: #34343a;
+  --text: #f2f2f0;
+  --text-dim: #9a9aa2;
+  --accent: #6c8cff;
+  --accent-text: #0c1230;
+  --danger: #ff6b6b;
+  --rail-gap: 10px;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Stops iOS from intercepting a drag to scroll/zoom the page instead of
+     drawing — the same reason Trace sets this on html/body/#root; scoped
+     to this subtree only, since App.tsx's dev harnesses below still want
+     normal page behavior. */
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+.cl-app *,
+.cl-app *::before,
+.cl-app *::after {
+  box-sizing: border-box;
+}
+
+.cl-canvas {
+  /* Fills the entire stage — the canvas IS the background, same as
+     Trace's `.canvas-surface`. Its intrinsic bitmap is a fixed 360x640
+     (DOC_WIDTH/HEIGHT) and a replaced element never grows past its own
+     pixel size without an explicit display size, so without
+     object-fit:contain it would sit tiny in the middle of the screen on
+     anything bigger than its native resolution. */
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  touch-action: none;
+  cursor: crosshair;
+  display: block;
+}
+
+/* -- Lasso selection overlay (task 2.17) -- */
+
+.cl-selection-overlay {
+  /* Shares the canvas's own object-fit:contain-equivalent scaling via
+     preserveAspectRatio (set in the JSX, matched to the viewBox) — see
+     DrawingCanvas.tsx's own comment on why this needs no manual
+     scale/offset math, unlike the pointer handlers. */
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 12;
+  pointer-events: none;
+}
+
+.cl-lasso-path,
+.cl-selection-outline {
+  fill: none;
+  /* A plain white stroke (this app's usual UI-chrome color) is invisible
+     against white paper, the default document background — the accent
+     blue reads clearly against both a light canvas and this app's own
+     dark chrome. */
+  stroke: var(--accent);
+  stroke-width: 2;
+  /* Keeps the stroke a constant on-screen width regardless of how much
+     the viewBox scales the document's own pixel coordinates up or down
+     to fit the container. */
+  vector-effect: non-scaling-stroke;
+  paint-order: stroke;
+}
+
+.cl-lasso-path {
+  stroke-dasharray: 3 3;
+  opacity: 0.85;
+}
+
+.cl-selection-outline {
+  stroke-dasharray: 4 3;
+  animation: cl-marching-ants 0.6s linear infinite;
+}
+
+@keyframes cl-marching-ants {
+  to {
+    stroke-dashoffset: -7;
+  }
+}
+
+.cl-status {
+  position: absolute;
+  left: 50%;
+  /* Sits above the timeline rail (task 2.14), which now occupies the
+     bottom-center spot this used to have to itself. */
+  bottom: calc(var(--rail-gap) + 52px);
+  transform: translateX(-50%);
+  z-index: 15;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  padding: 3px 10px;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+/* -- Floating rails (tool icons, undo/redo, panel toggles) -- */
+
+.cl-rail {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.cl-rail--left {
+  left: var(--rail-gap);
+  top: 50%;
+  transform: translateY(-50%);
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  max-height: calc(100% - 2 * var(--rail-gap));
+  overflow-y: auto;
+}
+
+.cl-rail--top {
+  top: var(--rail-gap);
+  right: var(--rail-gap);
+  align-items: center;
+}
+
+/* -- Timeline (task 2.14): frame transport, bottom-center -- */
+
+.cl-rail--bottom {
+  left: 50%;
+  bottom: var(--rail-gap);
+  transform: translateX(-50%);
+  align-items: center;
+  max-width: calc(100vw - 2 * var(--rail-gap));
+  overflow-x: auto;
+}
+
+.cl-frame-counter {
+  flex: none;
+  padding: 0 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.cl-fps-input {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.cl-fps-input input {
+  width: 32px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 2px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.cl-rail-divider {
+  background: var(--border);
+}
+
+.cl-rail--top .cl-rail-divider,
+.cl-rail--bottom .cl-rail-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 4px;
+}
+
+.cl-rail--left .cl-rail-divider {
+  height: 1px;
+  width: 28px;
+  margin: 2px 0;
+}
+
+.cl-railbtn {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms, transform 80ms;
+}
+
+.cl-railbtn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.cl-railbtn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.cl-railbtn[aria-pressed='true'],
+.cl-railbtn.is-active {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.cl-railbtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cl-railbtn--ghost {
+  width: 30px;
+  height: 30px;
+  color: var(--text-dim);
+}
+
+.cl-railbtn--danger:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--danger);
+}
+
+.cl-colorwell {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.35);
+}
+
+.cl-rail__sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 2px;
+}
+
+/* -- Floating panels: Layers / Brush / Color -- */
+
+.cl-panel {
+  position: absolute;
+  top: calc(var(--rail-gap) + 56px);
+  bottom: var(--rail-gap);
+  right: var(--rail-gap);
+  z-index: 30;
+  width: 320px;
+  max-width: calc(100vw - 2 * var(--rail-gap));
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(22px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.cl-panel__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cl-panel__head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cl-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* -- Section cards inside a panel body: Tool / Brush / Color group headers -- */
+
+.cl-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cl-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.cl-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* -- Keyframe controls: the Transform panel's per-property easing pick + stopwatch -- */
+
+.cl-keyframe-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cl-easing-select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+/* -- Segmented control (kept for any future in-panel segmented choice) -- */
+
+.cl-segmented {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+  align-self: flex-start;
+}
+
+.cl-segmented button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms;
+}
+
+.cl-segmented button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* -- Bucket fill sliders (shown in the left rail when Bucket is active) -- */
+
+.cl-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  width: 100%;
+}
+
+.cl-slider-row input[type='range'] {
+  accent-color: var(--accent);
+  width: 100%;
+}
+
+/* -- Brush picker: horizontal chip rows grouped by category -- */
+
+.cl-chip-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cl-chip-group-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: capitalize;
+}
+
+.cl-chip-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  /* Fades the trailing edge so a scrollable row that overflows past the
+     panel doesn't look like it's just been cut off mid-chip. */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+}
+
+/* A short, non-scrolling list (e.g. the 3 format presets) wraps onto
+   multiple lines instead of scrolling horizontally — no fade mask
+   needed since nothing gets cut off. */
+.cl-chip-row--wrap {
+  flex-wrap: wrap;
+  overflow-x: visible;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.cl-chip {
+  flex: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms, border-color 120ms;
+}
+
+.cl-chip[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* -- Color palette -- */
+
+.cl-palette-select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.cl-swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cl-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px var(--border);
+  transition: transform 100ms, box-shadow 100ms;
+}
+
+.cl-swatch:hover {
+  transform: scale(1.08);
+}
+
+.cl-swatch--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.cl-color-input {
+  width: 100%;
+  height: 32px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+}
+
+/* -- Layers panel -- */
+
+.cl-layer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cl-layer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 120ms, border-color 120ms;
+}
+
+.cl-layer-row:hover {
+  border-color: var(--border);
+}
+
+.cl-layer-row--active {
+  background: #2a3363; /* fallback for browsers without color-mix() */
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-2));
+  border-color: var(--accent);
+}
+
+.cl-layer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.cl-layer-row--active .cl-layer-name {
+  font-weight: 600;
+}
+
+.cl-layer-kind {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.cl-layer-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 13px;
+}
+
+.cl-layer-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex: none;
+  transition: background-color 120ms, color 120ms;
+}
+
+.cl-layer-btn:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.cl-layer-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.cl-layer-btn--danger:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+.cl-layer-btn--active {
+  color: var(--accent);
+}
+
+.cl-add-layer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  background: var(--surface-2);
+  border: 1px dashed var(--border);
+  color: var(--text-dim);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms;
+}
+
+.cl-add-layer:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
