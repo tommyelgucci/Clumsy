@@ -170,6 +170,55 @@ const removed = await page.evaluate((name) => {
 check('the panel disables Delete once only one layer remains', await page.getByRole('button', { name: new RegExp(`^Delete ${lastLayerName}$`) }).isDisabled());
 check('removeLayer() itself refuses to remove the last layer', removed === false && (await layerCount()) === 1, JSON.stringify(await layerNames()));
 
+console.log('\n— Regression: deleting a layer must not leave stale undo entries that can corrupt a different layer later —');
+// A Codex review caught this: removeLayer() released a deleted layer's
+// GPU surfaces immediately, but earlier stroke/fill/clear commands on
+// that layer were still sitting in the undo stack, their closures still
+// referencing that now-destroyed surface. WebGL commonly recycles a
+// freed texture's object name for the very next createTexture() call —
+// so drawing on some OTHER layer right after the deletion (as this test
+// does) is exactly the scenario where an old, stale undo entry could
+// silently overwrite that unrelated layer's brand-new surface instead of
+// failing loudly. Fixed via History.discardForLayer, called from
+// removeLayer before it releases anything.
+// Renamed via the engine directly (not the UI's rename gesture) purely
+// to get distinct, unambiguous names — `addLayer()`'s default "Layer N"
+// naming collides with whatever survived the earlier delete-the-last-
+// layer test above, and this test cares about identity, not naming UI.
+await page.getByRole('button', { name: 'Add layer' }).click();
+const doomedLayerId = await page.evaluate(() => window.__clumsyloopEngine.activeLayerId);
+await page.evaluate((id) => window.__clumsyloopEngine.renameLayer(id, 'Doomed layer'), doomedLayerId);
+await dragStroke([[60, 500], [200, 500]]); // builds a stroke command tagged to this layer
+await dragStroke([[60, 550], [200, 550]]); // and a second one, for good measure
+
+await page.getByRole('button', { name: 'Add layer' }).click(); // a different, unrelated layer, active — the doomed one no longer is
+const survivorId = await page.evaluate(() => window.__clumsyloopEngine.activeLayerId);
+await page.evaluate((id) => window.__clumsyloopEngine.renameLayer(id, 'Survivor layer'), survivorId);
+
+await page.getByRole('button', { name: /^Delete Doomed layer$/ }).click();
+check('the doomed layer is gone, the unrelated survivor remains', (await layerCount()) === 2 && (await layerNames()).includes('Survivor layer'), JSON.stringify(await layerNames()));
+const stillReferencesDeletedLayer = await page.evaluate(
+  (id) => window.__clumsyloopEngine.history.pastCommands.some((c) => c.layerId === id),
+  doomedLayerId,
+);
+check("no undo entry still references the deleted layer's id", !stillReferencesDeletedLayer);
+
+// Immediately create fresh GPU surfaces on the SURVIVING layer — the
+// scenario most likely to actually reuse a just-freed GL texture name,
+// if anything still could reach it.
+await dragStroke([[60, 600], [200, 600]]); // a fresh stroke on the survivor
+const survivorInkBefore = await avgAt(130, 600, 3);
+check('the fresh stroke on the survivor landed', survivorInkBefore.r < 150, JSON.stringify(survivorInkBefore));
+
+let undoCount = 0;
+while (await page.evaluate(() => window.__clumsyloopEngine.history.canUndo)) {
+  await page.evaluate(() => window.__clumsyloopEngine.undo());
+  undoCount++;
+  if (undoCount > 50) break; // guard against an actual infinite loop, not expected
+}
+check('undoing all the way through history raised no console/page errors', errors.length === 0, errors.join(' | '));
+check('the survivor layer still exists after undoing past the deleted layer\'s old (now-discarded) history', (await layerNames()).includes('Survivor layer'));
+
 if (errors.length > 0) {
   check('no console/page errors throughout', false, errors.join(' | '));
 }

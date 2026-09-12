@@ -36,6 +36,7 @@ describe('parseTransactionInfo', () => {
     expiresDate: 1_800_000_000_000,
     revocationDate: null,
     environment: 'Sandbox',
+    appAccountToken: 'aaaaaaaa-bbbb-5ccc-8ddd-eeeeeeeeeeee',
   };
 
   test('parses a well-formed payload', () => {
@@ -50,6 +51,13 @@ describe('parseTransactionInfo', () => {
     const info = parseTransactionInfo(rest);
     assert.equal(info?.expiresDate, null);
     assert.equal(info?.revocationDate, null);
+  });
+
+  test('accepts a missing appAccountToken as null — a transaction nobody bound to an account', () => {
+    const { appAccountToken, ...rest } = validPayload;
+    void appAccountToken;
+    const info = parseTransactionInfo(rest);
+    assert.equal(info?.appAccountToken, null);
   });
 
   test('rejects a payload missing a required field', () => {

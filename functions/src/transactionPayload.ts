@@ -29,6 +29,13 @@ export interface TransactionInfo {
    *  otherwise `null`. */
   revocationDate: number | null;
   environment: 'Sandbox' | 'Production';
+  /** The UUID the purchasing client set on this transaction (see
+   *  accountToken.ts) — `null` for a transaction nobody bound to an
+   *  account, which `validateReceipt` must always reject rather than
+   *  guess an owner for. Passed through as whatever string Apple's JSON
+   *  carries; this module doesn't validate it's UUID-shaped, since a
+   *  mismatched value fails the equality check downstream regardless. */
+  appAccountToken: string | null;
 }
 
 function base64urlDecode(segment: string): Buffer {
@@ -70,6 +77,8 @@ export function parseTransactionInfo(payload: unknown): TransactionInfo | null {
   const revocationDate = p.revocationDate === undefined || p.revocationDate === null ? null : Number(p.revocationDate);
   if (revocationDate !== null && !Number.isFinite(revocationDate)) return null;
 
+  const appAccountToken = typeof p.appAccountToken === 'string' ? p.appAccountToken : null;
+
   return {
     transactionId: p.transactionId,
     productId: p.productId,
@@ -77,5 +86,6 @@ export function parseTransactionInfo(payload: unknown): TransactionInfo | null {
     expiresDate,
     revocationDate,
     environment: p.environment,
+    appAccountToken,
   };
 }

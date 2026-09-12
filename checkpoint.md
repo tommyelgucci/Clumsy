@@ -1,5 +1,111 @@
 # Checkpoint — Progress log
 
+### 2026-09-12 — Six fixes from a Codex review of PR #6
+
+A Codex review (`chatgpt-codex-connector[bot]`) left six findings on PR
+#6 (the canvas transform gizmo, task 2.21), all P1/P2. Verified each one
+against the actual code before touching anything — all six were real,
+none inflated or off-base. Fixed all six, easiest to hardest, each with
+its own regression coverage rather than just patching the reported line:
+
+1. **`firestore.rules`: `ownerId` wasn't actually immutable.** The
+   `projects` collection's `update` rule only checked the EXISTING
+   document's `ownerId`, never the incoming one — the legitimate owner's
+   own update could silently reassign `ownerId` to someone else and lock
+   themselves out. Split `update` out from `read`/`delete` and added
+   `request.resource.data.ownerId == resource.data.ownerId`. New
+   `scripts/firestore-rules-test.mjs` check (owner tries to reassign
+   their own project) fails against the old rule, passes against the fix.
+
+2. **`functions/src/index.ts`: `validateReceiptCallable` never declared
+   its secrets.** `APP_STORE_KEY_ID`/`APP_STORE_ISSUER_ID`/
+   `APP_STORE_PRIVATE_KEY` are documented as arriving via Firebase Secret
+   Manager (`firebase functions:secrets:set`), but Cloud Functions v2
+   only injects a secret into `process.env` for an instance that
+   declares it in the function's own options — nothing did. Every real
+   invocation would have failed in `mustGetEnv` the moment those secrets
+   actually existed. Added `{ secrets: [...] }` as `onCall`'s first
+   argument.
+
+3. **`functions/src/`: nothing bound a validated transaction to the
+   account calling for it.** Any authenticated Firebase user who got
+   hold of someone else's real (not secret) StoreKit transaction ID
+   could call `validateReceiptCallable` themselves and have that
+   person's entitlement written to their OWN uid. New `accountToken.ts`:
+   `deriveAppAccountToken(uid)` derives a UUIDv5 deterministically from
+   the Firebase uid (no separate mapping collection needed — the same
+   input always produces the same UUID on both ends), matching
+   StoreKit 2's own `Transaction.appAccountToken: UUID?` binding
+   mechanism. `TransactionInfo` gained an `appAccountToken` field;
+   `validateReceipt` now takes an `expectedAccountToken` parameter and
+   rejects any transaction whose token doesn't match — including one
+   that never set a token at all. Task 3.3 (the still-pending client
+   purchase flow) will need to set `Transaction.appAccountToken` to this
+   exact derivation when it's built; documented clearly in
+   `accountToken.ts`'s own header for whoever picks that up. 7 new/
+   updated unit tests across `accountToken.test.ts`,
+   `transactionPayload.test.ts`, `validateReceipt.test.ts`.
+
+4. **`gl/engine.ts`: undo/redo of a transform edit could silently
+   corrupt a DIFFERENT layer.** `restoreChannel` resolved
+   `this.activeLayer` at the moment undo/redo actually ran, not the
+   layer the edit was made on — so adjusting a transform on layer A,
+   switching to layer B, then pressing Ctrl+Z applied layer A's old
+   values onto layer B's channel instead of undoing A's edit at all.
+   Introduced a `TransformSnapshot` type that carries its own `layer`
+   reference; `snapshotChannel`/`restoreChannel` and all three affected
+   methods (`commitLayerTransform`, `toggleKeyframeHere`,
+   `setKeyframeEasing`) now bind to that captured layer instead of
+   re-resolving the active one. New regression block in
+   `scripts/keyframe-smoke.mjs`: commits an edit on layer A, switches to
+   layer B (with its own, different, already-committed value), then
+   undoes/redoes — confirmed this fails three ways against the old code
+   (reverted `engine.ts` under `git stash` to check) and passes clean
+   against the fix.
+
+5. **`gl/engine.ts`: deleting a layer left stale undo entries that could
+   corrupt a DIFFERENT layer's surface later.** `removeLayer` released a
+   deleted layer's GPU surfaces immediately, but every earlier stroke/
+   fill/clear/selection command on that layer was still sitting in the
+   global undo stack, its closures still holding a reference to the now-
+   destroyed surface. WebGL commonly recycles a freed texture's object
+   name for the very next `createTexture()` call, so undoing far enough
+   to reach one of those stale commands could silently write the deleted
+   layer's old pixels onto whatever unrelated layer's surface has since
+   been assigned that same recycled GL name — not an error, a silent
+   corruption. New `History.discardForLayer(layerId)` (`core/
+   history.ts`): drops every command tagged with that layer id from both
+   the past and future stacks. `Command` gained an optional `layerId`
+   field; every one of `Engine`'s 12 history-pushing call sites now
+   tags itself with the layer it actually acted on. `removeLayer` calls
+   `discardForLayer` before releasing anything. 5 new unit tests in
+   `core/history.test.ts`; new regression block in
+   `scripts/layers-smoke.mjs` that deletes a layer with real history,
+   immediately draws on a different surviving layer (creating pressure
+   to reuse the just-freed GPU surface), then undoes all the way through
+   what's left — confirmed the direct `pastCommands` check fails when
+   `discardForLayer`'s call site is disabled (verified surgically, not
+   by reverting the whole feature) and passes with it restored.
+
+6. **`gl/engine.ts`: `floodFill` could overwrite an edit that happened
+   while it was waiting on its worker.** Not fixed in this pass — the
+   fill is genuinely async (a worker round-trip), and serializing/
+   revalidating it against whatever the cel looks like when the promise
+   resolves is real, separate work with its own tradeoffs (block new
+   edits on the same cel while a fill is in flight? re-run the fill
+   against a fresher snapshot? something else?) rather than a small
+   self-contained patch like the other five. Left open, not silently
+   dropped — flagged here so it doesn't get lost.
+
+All fixes verified together: `tsc -b`, `npm run lint` (root + `functions/`),
+143 root unit tests (up from 138), 35 `functions/` unit tests, the full
+12-script Playwright suite, and `firebase emulators:exec --only firestore
+'npm run test:rules'`. Every new regression test was confirmed to actually
+fail against the pre-fix code, not just pass against the fix — either by
+reverting the relevant file(s) or, where reverting the whole file would
+have hidden the check itself (the `layerId` tagging is new too), by
+surgically disabling just the fix's own call site.
+
 ### 2026-09-12 — Task 2.21 (done): canvas transform gizmo
 
 Closes the easier half of the pair named as remaining after 2.20 — drag

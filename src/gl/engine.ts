@@ -160,6 +160,16 @@ export interface Selection {
   points: DocPoint[];
 }
 
+/** A transform channel's value at some point in time, bound to the
+ *  layer it was taken from — see `restoreChannel`'s own comment for why
+ *  carrying `layer` here (rather than re-resolving `this.activeLayer`
+ *  wherever a snapshot gets restored) is the whole point of this type. */
+interface TransformSnapshot {
+  layer: Layer;
+  base: number;
+  keys: Keyframe[];
+}
+
 export class Engine {
   readonly renderer: Renderer;
   readonly doc: ClumsyloopDocument;
@@ -310,6 +320,7 @@ export class Engine {
     const wasAnimated = layer.animated;
     this.history.run({
       label: duplicate ? 'Duplicate frame' : 'New frame',
+      layerId: layer.id,
       redo: () => {
         layer.animated = true;
         layer.cels.set(frame, cel);
@@ -342,6 +353,7 @@ export class Engine {
     if (!cel) return;
     this.history.run({
       label: 'Delete frame',
+      layerId: layer.id,
       redo: () => layer.cels.delete(frame),
       undo: () => layer.cels.set(frame, cel),
     });
@@ -373,17 +385,26 @@ export class Engine {
     return layer;
   }
 
-  /** Removes a layer and releases its cels' GPU surfaces — safe to do
-   *  immediately since (unlike stroke/fill undo) layer removal isn't
-   *  undoable, so nothing else can still need that texture afterward.
-   *  Refuses to remove the last layer: the document always needs
-   *  somewhere to paint. Returns whether it actually removed anything,
-   *  so the UI can tell a real deletion from a no-op. */
+  /** Removes a layer and releases its cels' GPU surfaces — the removal
+   *  itself isn't undoable, so nothing about THIS action needs that
+   *  texture afterward. But every PRIOR stroke/fill/clear/selection
+   *  command done on this layer is still sitting in `history`, and its
+   *  closures still hold a reference to the surface this just released
+   *  — `history.discardForLayer` drops all of those before the release,
+   *  so undo/redo can never reach a command that writes to a destroyed
+   *  surface (see that method's own comment for the exact corruption
+   *  this prevents: WebGL recycling a deleted texture's object name for
+   *  some other layer's brand-new surface, and a stale undo silently
+   *  overwriting THAT layer instead of erroring). Refuses to remove the
+   *  last layer: the document always needs somewhere to paint. Returns
+   *  whether it actually removed anything, so the UI can tell a real
+   *  deletion from a no-op. */
   removeLayer(id: string): boolean {
     if (this.doc.layers.length <= 1) return false;
     const index = this.doc.layers.findIndex((l) => l.id === id);
     if (index < 0) return false;
     const [layer] = this.doc.layers.splice(index, 1);
+    this.history.discardForLayer(id);
     for (const cel of layer.cels.values()) this.renderer.release(cel.surface);
     if (this._activeLayerId === id) {
       this._activeLayerId = this.doc.layers[Math.max(0, index - 1)].id;
@@ -450,13 +471,25 @@ export class Engine {
     return this.activeLayer.transform[prop].keys.some((k) => k.frame === this._currentFrame);
   }
 
-  private snapshotChannel(prop: TransformProp): { base: number; keys: Keyframe[] } {
-    const ch = this.activeLayer.transform[prop];
-    return { base: ch.base, keys: ch.keys.map((k) => ({ ...k })) };
+  /** Snapshots one property's channel — bound to `layer`, not whatever
+   *  happens to be `this.activeLayer` (see `restoreChannel`'s own
+   *  comment for why that distinction is the whole fix here). */
+  private snapshotChannel(layer: Layer, prop: TransformProp): TransformSnapshot {
+    const ch = layer.transform[prop];
+    return { layer, base: ch.base, keys: ch.keys.map((k) => ({ ...k })) };
   }
 
-  private restoreChannel(prop: TransformProp, snap: { base: number; keys: Keyframe[] }) {
-    const ch = this.activeLayer.transform[prop];
+  /** Restores a snapshot onto the SAME layer it was taken from
+   *  (`snap.layer`), never `this.activeLayer`. Every transform history
+   *  entry's redo/undo closure calls this at some later, arbitrary time —
+   *  re-resolving `this.activeLayer` in here (the bug a Codex review
+   *  caught) would restore onto whatever layer happens to be active WHEN
+   *  undo/redo eventually runs, not the layer the edit actually
+   *  happened on: adjust a transform on layer A, switch to layer B, then
+   *  press undo, and layer B's channel gets silently overwritten with
+   *  layer A's old values instead of nothing happening to B at all. */
+  private restoreChannel(prop: TransformProp, snap: TransformSnapshot) {
+    const ch = snap.layer.transform[prop];
     ch.base = snap.base;
     ch.keys = snap.keys.map((k) => ({ ...k }));
   }
@@ -475,12 +508,17 @@ export class Engine {
 
   /** Closes out a drag started with `snapshotLayerTransform` into exactly
    *  one undo step — a no-op if the channel ended up identical to where
-   *  it started (a click with no actual drag). */
-  commitLayerTransform(prop: TransformProp, before: { base: number; keys: Keyframe[] }) {
-    const after = this.snapshotChannel(prop);
+   *  it started (a click with no actual drag). Re-snapshots `before
+   *  .layer` (the layer the gesture actually started on), not whatever's
+   *  active now — the UI can't switch the active layer mid-gesture today,
+   *  but this stays correct even if that ever changes, for the same
+   *  reason `restoreChannel` itself does. */
+  commitLayerTransform(prop: TransformProp, before: TransformSnapshot) {
+    const after = this.snapshotChannel(before.layer, prop);
     if (before.base === after.base && JSON.stringify(before.keys) === JSON.stringify(after.keys)) return;
     this.history.push({
       label: `Adjust ${prop}`,
+      layerId: before.layer.id,
       redo: () => this.restoreChannel(prop, after),
       undo: () => this.restoreChannel(prop, before),
     });
@@ -489,9 +527,11 @@ export class Engine {
   /** Snapshot to pass to `commitLayerTransform` once a drag gesture ends —
    *  split out from it only so the UI can capture "before" at
    *  pointer-down and "after" at pointer-up, rather than needing the
-   *  whole gesture's value stream threaded through one call. */
-  snapshotLayerTransform(prop: TransformProp): { base: number; keys: Keyframe[] } {
-    return this.snapshotChannel(prop);
+   *  whole gesture's value stream threaded through one call. Bound to
+   *  whichever layer is active right now, at the START of the gesture —
+   *  see `restoreChannel`'s comment for why that binding matters. */
+  snapshotLayerTransform(prop: TransformProp): TransformSnapshot {
+    return this.snapshotChannel(this.activeLayer, prop);
   }
 
   /** Explicit "stopwatch" toggle: adds a keyframe at the current frame
@@ -503,13 +543,14 @@ export class Engine {
     const layer = this.activeLayer;
     const ch = layer.transform[prop];
     const frame = this._currentFrame;
-    const before = this.snapshotChannel(prop);
+    const before = this.snapshotChannel(layer, prop);
     const hadKeyHere = ch.keys.some((k) => k.frame === frame);
     if (hadKeyHere) removeKeyframe(ch, frame);
     else setKeyframe(ch, frame, sampleChannel(ch, frame));
-    const after = this.snapshotChannel(prop);
+    const after = this.snapshotChannel(layer, prop);
     this.history.push({
       label: hadKeyHere ? `Remove ${prop} keyframe` : `Add ${prop} keyframe`,
+      layerId: layer.id,
       redo: () => this.restoreChannel(prop, after),
       undo: () => this.restoreChannel(prop, before),
     });
@@ -536,14 +577,16 @@ export class Engine {
    *  found keyframe's `easing` field directly instead. No-op if there's
    *  no keyframe there, or it's already set to `easing`. */
   setKeyframeEasing(prop: TransformProp, easing: Easing) {
-    const ch = this.activeLayer.transform[prop];
+    const layer = this.activeLayer;
+    const ch = layer.transform[prop];
     const existing = ch.keys.find((k) => k.frame === this._currentFrame);
     if (!existing || existing.easing === easing) return;
-    const before = this.snapshotChannel(prop);
+    const before = this.snapshotChannel(layer, prop);
     existing.easing = easing;
-    const after = this.snapshotChannel(prop);
+    const after = this.snapshotChannel(layer, prop);
     this.history.push({
       label: `${prop} easing`,
+      layerId: layer.id,
       redo: () => this.restoreChannel(prop, after),
       undo: () => this.restoreChannel(prop, before),
     });
@@ -661,7 +704,7 @@ export class Engine {
    *  no-op) and is detected and skipped rather than recorded. */
   endMoveSelection() {
     if (!this.moveDrag) return;
-    const { cel, fullBefore, originRect, currentRect } = this.moveDrag;
+    const { layer, cel, fullBefore, originRect, currentRect } = this.moveDrag;
     this.moveDrag = null;
     if (!this.selection) return;
 
@@ -686,6 +729,7 @@ export class Engine {
     const fullAfter = this.renderer.readRect(cel.surface, 0, 0, this.doc.width, this.doc.height);
     this.history.push({
       label: 'Move selection',
+      layerId: layer.id,
       cost: fullBefore.byteLength + fullAfter.byteLength,
       redo: () => {
         this.renderer.writeRect(cel.surface, 0, 0, this.doc.width, this.doc.height, fullAfter);
@@ -761,6 +805,7 @@ export class Engine {
 
     this.history.push({
       label: 'Duplicate selection',
+      layerId: layer.id,
       cost: destBefore.byteLength + destAfter.byteLength,
       redo: () => {
         this.renderer.writeRect(cel.surface, nx, ny, w, h, destAfter);
@@ -880,6 +925,7 @@ export class Engine {
       // `push`, not `run`: the merge already happened, just above.
       this.history.push({
         label,
+        layerId: layer.id,
         cost: before.byteLength + after.byteLength,
         redo: () => {
           if (created) layer.cels.set(frame, cel);
@@ -921,6 +967,7 @@ export class Engine {
 
     this.history.push({
       label,
+      layerId: layer.id,
       cost: before.byteLength + after.byteLength,
       redo: () => {
         if (created) layer.cels.set(frame, cel);
@@ -1018,6 +1065,7 @@ export class Engine {
       this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, after);
       this.history.push({
         label: 'Clear',
+        layerId: layer.id,
         cost: before.byteLength + after.byteLength,
         redo: () => this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, after),
         undo: () => this.renderer.writeRect(cel.surface, rect.x, rect.y, rectW, rectH, before),
@@ -1032,6 +1080,7 @@ export class Engine {
     this.renderer.clear(cel.surface);
     this.history.push({
       label: 'Clear',
+      layerId: layer.id,
       cost: before.byteLength,
       redo: () => this.renderer.clear(cel.surface),
       undo: () => this.renderer.writeRect(cel.surface, 0, 0, w, h, before),
@@ -1156,6 +1205,7 @@ export class Engine {
 
     const cmd: Command = {
       label: 'Fill',
+      layerId: layer.id,
       cost: after.byteLength + before.byteLength,
       redo: () => {
         if (created) layer.cels.set(frame, cel);

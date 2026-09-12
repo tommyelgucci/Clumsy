@@ -10,6 +10,7 @@ const base: TransactionInfo = {
   expiresDate: null,
   revocationDate: null,
   environment: 'Sandbox',
+  appAccountToken: 'aaaaaaaa-bbbb-5ccc-8ddd-eeeeeeeeeeee',
 };
 
 describe('decideEntitlement', () => {

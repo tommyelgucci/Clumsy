@@ -12,6 +12,15 @@ export interface Command {
   redo(): void;
   /** Approximate bytes retained, to budget the stack. */
   cost?: number;
+  /** The id of the layer this command's undo/redo closures act on, if
+   *  any — lets `discardForLayer` find and drop every command tied to a
+   *  layer that no longer exists (see that method's own comment for why
+   *  this matters). Optional: history isn't exclusively layer-scoped
+   *  content in general (Trace's own port of this module has no such
+   *  concept), only Clumsyloop's `Engine` happens to tag every command
+   *  it creates with one, since every one of its commands acts on
+   *  exactly one layer's cel or transform. */
+  layerId?: string;
 }
 
 const MAX_STEPS = 120;
@@ -71,6 +80,39 @@ export class History {
     this.future.length = 0;
     this.bytes = 0;
     this.emit();
+  }
+
+  /**
+   * Drops every command tagged with `layerId` from both stacks — for
+   * when the layer itself is gone (a Codex review caught the bug this
+   * fixes): `Engine.removeLayer` releases a deleted layer's GPU surfaces
+   * immediately, since layer removal itself isn't undoable, but every
+   * PRIOR stroke/fill/clear/selection command on that layer was still
+   * sitting in this same stack, its closures still holding a reference
+   * to the now-destroyed surface. WebGL recycles a deleted texture's
+   * object name for the next `createTexture` call, so undoing far enough
+   * to reach one of those stale commands wouldn't just fail loudly — it
+   * could silently write the deleted layer's old pixels onto whatever
+   * unrelated layer's surface happens to have been assigned that same
+   * recycled GL name since. Discarding those commands outright (rather
+   * than leaving them to fail some other way) is the same choice
+   * `removeLayer` already made about the removal itself: once a layer is
+   * gone, its edit history isn't meaningfully undoable either.
+   */
+  discardForLayer(layerId: string) {
+    const before = this.past.length + this.future.length;
+    const keep = (cmd: Command) => cmd.layerId !== layerId;
+    this.past = this.past.filter((cmd) => {
+      const keeping = keep(cmd);
+      if (!keeping) this.bytes -= cmd.cost ?? 0;
+      return keeping;
+    });
+    this.future = this.future.filter((cmd) => {
+      const keeping = keep(cmd);
+      if (!keeping) this.bytes -= cmd.cost ?? 0;
+      return keeping;
+    });
+    if (this.past.length + this.future.length !== before) this.emit();
   }
 
   get pastCommands(): readonly Command[] {
