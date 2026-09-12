@@ -26,12 +26,23 @@ service cloud.firestore {
 
     // A user's local stop-motion projects, synced to the cloud (the paid
     // "cloud save" feature — see RUMBO.md's Business model section).
-    // Ownership is fixed at creation and never transferable: read/update/
-    // delete all check the EXISTING document's ownerId (`resource.data`),
-    // while create has to check the INCOMING one (`request.resource.data`)
-    // since `resource` doesn't exist yet.
+    // Ownership is fixed at creation and never transferable: read/delete
+    // check the EXISTING document's ownerId (`resource.data`); create has
+    // to check the INCOMING one (`request.resource.data`) since
+    // `resource` doesn't exist yet; update checks BOTH — the caller must
+    // already be the owner AND the write can't change `ownerId` to
+    // someone else. Without that second half, the current owner's own
+    // legitimately-authorized update could reassign the document to any
+    // UID they name, which would silently transfer the project away and
+    // lock the original owner out — exactly the transfer this comment
+    // already claimed couldn't happen (caught by a real Codex review,
+    // not by the tests below, which only asserted the ownerId-check
+    // half and never tried changing ownerId itself).
     match /projects/{projectId} {
-      allow read, update, delete: if request.auth != null && request.auth.uid == resource.data.ownerId;
+      allow read, delete: if request.auth != null && request.auth.uid == resource.data.ownerId;
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.ownerId
+        && request.resource.data.ownerId == resource.data.ownerId;
       allow create: if request.auth != null && request.auth.uid == request.resource.data.ownerId;
     }
 

@@ -2,10 +2,11 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { History, type Command } from './history.ts';
 
-function spyCommand(label: string, cost = 0): Command & { undoCalls: number; redoCalls: number } {
+function spyCommand(label: string, cost = 0, layerId?: string): Command & { undoCalls: number; redoCalls: number } {
   const cmd = {
     label,
     cost,
+    layerId,
     undoCalls: 0,
     redoCalls: 0,
     undo() {
@@ -128,5 +129,68 @@ describe('History', () => {
     const h = new History();
     h.push(spyCommand('only', 400 * 1024 * 1024));
     assert.equal(h.pastCommands.length, 1);
+  });
+
+  describe('discardForLayer', () => {
+    // Regression coverage for a Codex-caught bug: Engine.removeLayer
+    // used to release a deleted layer's GPU surfaces while its prior
+    // commands were still sitting in this same stack, their closures
+    // still referencing that now-destroyed surface — a later undo/redo
+    // reaching one of those commands could silently corrupt whatever
+    // OTHER layer's surface WebGL had since recycled that texture name
+    // for. discardForLayer is the fix: drop every command tied to a
+    // layer id, from both stacks, the moment that layer is gone.
+
+    test('drops matching commands from the past stack, keeps the rest, in order', () => {
+      const h = new History();
+      h.push(spyCommand('layer A stroke 1', 0, 'A'));
+      h.push(spyCommand('layer B stroke', 0, 'B'));
+      h.push(spyCommand('layer A stroke 2', 0, 'A'));
+      h.discardForLayer('A');
+      assert.deepEqual(h.pastCommands.map((c) => c.label), ['layer B stroke']);
+    });
+
+    test('also drops matching commands from the future (redo) stack', () => {
+      const h = new History();
+      const a = spyCommand('layer A edit', 0, 'A');
+      const b = spyCommand('layer B edit', 0, 'B');
+      h.push(a);
+      h.push(b);
+      h.undo();
+      h.undo();
+      assert.equal(h.canRedo, true);
+      h.discardForLayer('A');
+      // Only B's command is left to redo; A's is gone entirely.
+      h.redo();
+      assert.equal(b.redoCalls, 1);
+      assert.equal(h.canRedo, false);
+    });
+
+    test('never calls undo/redo on a discarded command', () => {
+      const h = new History();
+      const doomed = spyCommand('layer A edit', 0, 'A');
+      h.push(doomed);
+      h.push(spyCommand('layer B edit', 0, 'B'));
+      h.discardForLayer('A');
+      while (h.canUndo) h.undo();
+      assert.equal(doomed.undoCalls, 0);
+    });
+
+    test('untagged commands (layerId undefined) are never matched or dropped', () => {
+      const h = new History();
+      h.push(spyCommand('no particular layer'));
+      h.discardForLayer('anything');
+      assert.equal(h.pastCommands.length, 1);
+    });
+
+    test('a no-op discard (nothing tagged for that layer) does not notify subscribers', () => {
+      const h = new History();
+      h.push(spyCommand('layer B edit', 0, 'B'));
+      let calls = 0;
+      h.subscribe(() => calls++);
+      h.discardForLayer('A');
+      assert.equal(calls, 0);
+      assert.equal(h.pastCommands.length, 1);
+    });
   });
 });

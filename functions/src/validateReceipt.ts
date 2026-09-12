@@ -11,16 +11,22 @@ export class ReceiptRejected extends Error {}
  * unit-testable — same "thin runtime wrapper around plain, testable
  * logic" shape `onReportCreated`/`moderation.ts` already use (task 5.2).
  * Fetches the transaction from Apple, decodes (NOT signature-verifies —
- * see transactionPayload.ts) its payload, confirms it's for this app,
- * and decides the entitlement. Throws `ReceiptRejected` for every
- * failure mode — Apple itself refusing the transaction ID, a malformed
- * payload, or a payload for a different app's bundle ID — so the caller
- * (`index.ts`) has exactly one thing to catch and turn into an
- * `HttpsError`, and writes nothing to Firestore in any of those cases.
+ * see transactionPayload.ts) its payload, confirms it's for this app AND
+ * for the account calling this function (`expectedAccountToken` — see
+ * accountToken.ts; without this check, any authenticated user who got
+ * hold of someone else's real transaction ID could call this themselves
+ * and have the entitlement written to their own uid instead), and
+ * decides the entitlement. Throws `ReceiptRejected` for every failure
+ * mode — Apple itself refusing the transaction ID, a malformed payload,
+ * a payload for a different app's bundle ID, or one not bound to this
+ * caller — so the caller (`index.ts`) has exactly one thing to catch and
+ * turn into an `HttpsError`, and writes nothing to Firestore in any of
+ * those cases.
  */
 export async function validateReceipt(
   transactionId: string,
   bundleId: string,
+  expectedAccountToken: string,
   config: AppStoreClientConfig,
   fetchImpl?: FetchLike,
 ): Promise<EntitlementUpdate> {
@@ -38,6 +44,9 @@ export async function validateReceipt(
   }
   if (info.bundleId !== bundleId) {
     throw new ReceiptRejected('Transaction payload was for a different app');
+  }
+  if (info.appAccountToken !== expectedAccountToken) {
+    throw new ReceiptRejected('Transaction is not bound to the calling account');
   }
 
   return decideEntitlement(info, Date.now());

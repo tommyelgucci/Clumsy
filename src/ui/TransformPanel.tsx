@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { EASING_LABELS, EASINGS, TRANSFORM_LABELS, TRANSFORM_PROPS, type Easing, type Keyframe, type TransformProp } from '../core/document';
+import { EASING_LABELS, EASINGS, TRANSFORM_LABELS, TRANSFORM_PROPS, type Easing, type TransformProp } from '../core/document';
 import type { Engine } from '../gl/engine';
 import { KeyframeIcon } from './icons';
 
@@ -49,7 +49,7 @@ const RANGES: Record<TransformProp, { min: number; max: number; step: number; to
  */
 function TransformSlider({ engine, prop }: { engine: Engine; prop: TransformProp }) {
   const range = RANGES[prop];
-  const dragStart = useRef<{ base: number; keys: Keyframe[] } | null>(null);
+  const dragStart = useRef<ReturnType<Engine['snapshotLayerTransform']> | null>(null);
 
   const commit = () => {
     if (!dragStart.current) return;

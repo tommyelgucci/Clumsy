@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { deriveAppAccountToken } from './accountToken.js';
 import { shouldHideClip } from './moderation.js';
 import { ReceiptRejected, validateReceipt } from './validateReceipt.js';
 
@@ -60,7 +61,21 @@ export const onReportCreated = onDocumentCreated('reports/{reportId}', async (ev
  * real App Store Connect API credentials this project doesn't have yet
  * — they'd arrive via `firebase functions:secrets:set` at deploy time,
  * never committed. `APP_STORE_ENVIRONMENT=sandbox` targets Apple's
- * sandbox endpoint for testing real purchases before this ships.
+ * sandbox endpoint for testing real purchases before this ships. Cloud
+ * Functions v2 only exposes a secret provisioned this way to an instance
+ * that explicitly declares it in the function's own options — the
+ * `secrets` array below — so `mustGetEnv` reading `process.env` alone,
+ * with no declaration, would find those variables unset on every real
+ * invocation once the secrets actually exist, not just today while
+ * they're still missing (a real deploy-time bug a Codex review caught,
+ * not something local `tsc`/tests can see since they never touch actual
+ * Secret Manager-backed env injection).
+ *
+ * See accountToken.ts for the other real gap this same function used to
+ * have: nothing bound a validated transaction to the account that's
+ * supposed to own it, so any authenticated user who obtained someone
+ * else's real transaction ID could call this themselves and grant
+ * themselves that person's entitlement instead.
  *
  * See transactionPayload.ts's own header comment for the one real gap
  * still open here: the JWS payload from Apple is decoded but not yet
@@ -69,32 +84,35 @@ export const onReportCreated = onDocumentCreated('reports/{reportId}', async (ev
  * (auth, the HTTP call, parsing, the entitlement decision, and rejecting
  * without writing anything on failure) is built and tested.
  */
-export const validateReceiptCallable = onCall<{ transactionId: unknown }>(async (request) => {
-  const { transactionId } = request.data;
-  if (typeof transactionId !== 'string' || transactionId.length === 0) {
-    throw new HttpsError('invalid-argument', 'transactionId is required');
-  }
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Sign in required');
-  }
+export const validateReceiptCallable = onCall<{ transactionId: unknown }>(
+  { secrets: ['APP_STORE_KEY_ID', 'APP_STORE_ISSUER_ID', 'APP_STORE_PRIVATE_KEY'] },
+  async (request) => {
+    const { transactionId } = request.data;
+    if (typeof transactionId !== 'string' || transactionId.length === 0) {
+      throw new HttpsError('invalid-argument', 'transactionId is required');
+    }
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError('unauthenticated', 'Sign in required');
+    }
 
-  const config = {
-    keyId: mustGetEnv('APP_STORE_KEY_ID'),
-    issuerId: mustGetEnv('APP_STORE_ISSUER_ID'),
-    bundleId: BUNDLE_ID,
-    privateKeyPem: mustGetEnv('APP_STORE_PRIVATE_KEY'),
-    sandbox: process.env.APP_STORE_ENVIRONMENT === 'sandbox',
-  };
+    const config = {
+      keyId: mustGetEnv('APP_STORE_KEY_ID'),
+      issuerId: mustGetEnv('APP_STORE_ISSUER_ID'),
+      bundleId: BUNDLE_ID,
+      privateKeyPem: mustGetEnv('APP_STORE_PRIVATE_KEY'),
+      sandbox: process.env.APP_STORE_ENVIRONMENT === 'sandbox',
+    };
 
-  let update;
-  try {
-    update = await validateReceipt(transactionId, BUNDLE_ID, config);
-  } catch (err) {
-    if (err instanceof ReceiptRejected) throw new HttpsError('failed-precondition', err.message);
-    throw err;
-  }
+    let update;
+    try {
+      update = await validateReceipt(transactionId, BUNDLE_ID, deriveAppAccountToken(uid), config);
+    } catch (err) {
+      if (err instanceof ReceiptRejected) throw new HttpsError('failed-precondition', err.message);
+      throw err;
+    }
 
-  await getFirestore().doc(`entitlements/${uid}`).set(update, { merge: true });
-  return update;
-});
+    await getFirestore().doc(`entitlements/${uid}`).set(update, { merge: true });
+    return update;
+  },
+);

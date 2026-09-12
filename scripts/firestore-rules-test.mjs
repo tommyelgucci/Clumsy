@@ -75,6 +75,10 @@ await expectAllowed('the owner can read their own project', getDoc(doc(alice.fir
 await expectDenied("a different user cannot read alice's project", getDoc(doc(bob.firestore(), 'projects/alice-project')));
 await expectAllowed('the owner can update their own project', updateDoc(doc(alice.firestore(), 'projects/alice-project'), { name: 'Renamed clip' }));
 await expectDenied("a different user cannot update alice's project", updateDoc(doc(bob.firestore(), 'projects/alice-project'), { name: 'Hijacked' }));
+await expectDenied(
+  "the owner cannot reassign their own project's ownerId to someone else",
+  updateDoc(doc(alice.firestore(), 'projects/alice-project'), { ownerId: 'bob' }),
+);
 await expectDenied("a different user cannot delete alice's project", deleteDoc(doc(bob.firestore(), 'projects/alice-project')));
 await expectAllowed('the owner can delete their own project', deleteDoc(doc(alice.firestore(), 'projects/alice-project')));
 

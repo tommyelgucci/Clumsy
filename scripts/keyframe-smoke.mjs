@@ -154,6 +154,54 @@ await rotationKeyBtn.click(); // toggles off the keyframe at frame 1 (current fr
 s = await engineState();
 check('the frame-1 rotation keyframe is gone, frame 0 kept', !s.rotationKeys.includes(1) && s.rotationKeys.includes(0), JSON.stringify(s.rotationKeys));
 
+console.log('\n— Regression: undo/redo after switching layers must not corrupt the wrong one —');
+// A Codex review caught this: `restoreChannel` used to re-resolve
+// `this.activeLayer` at undo/redo time instead of the layer the edit
+// was actually made on, so switching layers between a transform commit
+// and pressing undo silently overwrote the NEW active layer's channel
+// with the OLD layer's snapshot.
+const layerY = (name) =>
+  page.evaluate((name) => {
+    const l = window.__clumsyloopEngine.doc.layers.find((l) => l.name === name);
+    return l.transform.y.base;
+  }, name);
+const ySlider = page.locator('.cl-slider-row', { has: page.getByText('Position Y', { exact: true }) }).locator('input[type=range]');
+const dragSlider = async (locator, value) => {
+  await locator.evaluate((el, value) => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, String(value));
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+  await locator.dispatchEvent('pointerup');
+};
+
+// Only one floating panel shows at a time (`activePanel` in
+// DrawingCanvas.tsx), so each switch back to Transform re-opens it —
+// there's no "Layers panel open AND Transform panel open" state to be in.
+await page.getByRole('button', { name: 'Layers', exact: true }).click();
+await page.locator('.cl-add-layer').click(); // "Layer 2", becomes active
+await page.getByRole('button', { name: 'Transform' }).click();
+await dragSlider(ySlider, 200); // Layer 2's own transform: y = 200
+check('Layer 2 committed its own y = 200', (await layerY('Layer 2')) === 200, String(await layerY('Layer 2')));
+
+await page.getByRole('button', { name: 'Layers', exact: true }).click();
+await page.locator('.cl-layer-name', { hasText: 'Ink' }).click(); // back to the original layer
+await page.getByRole('button', { name: 'Transform' }).click();
+await dragSlider(ySlider, 80); // Ink's own transform: y = 0 -> 80
+check('Ink committed its own y = 80', (await layerY('Ink')) === 80, String(await layerY('Ink')));
+
+await page.getByRole('button', { name: 'Layers', exact: true }).click();
+await page.locator('.cl-layer-name', { hasText: 'Layer 2' }).click(); // switch active layer again, no new edit
+
+await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z'); // undoes Ink's y edit — Layer 2 is active now
+check("undo reverts Ink's own y back to 0, not Layer 2's", (await layerY('Ink')) === 0, String(await layerY('Ink')));
+check("Layer 2's y is untouched by an undo of a different layer's edit", (await layerY('Layer 2')) === 200, String(await layerY('Layer 2')));
+
+await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+z' : 'Control+Shift+z'); // redo, Layer 2 still active
+check("redo re-applies Ink's y = 80, not Layer 2's", (await layerY('Ink')) === 80, String(await layerY('Ink')));
+check("Layer 2's y is still untouched after redo", (await layerY('Layer 2')) === 200, String(await layerY('Layer 2')));
+
 console.log(`\n${failures === 0 ? 'All checks passed.' : `${failures} check(s) FAILED.`}`);
 if (errors.length > 0) {
   console.log('\nConsole errors observed:');
