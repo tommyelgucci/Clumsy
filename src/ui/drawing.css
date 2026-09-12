@@ -373,6 +373,23 @@
   justify-content: space-between;
 }
 
+/* -- Keyframe controls: the Transform panel's per-property easing pick + stopwatch -- */
+
+.cl-keyframe-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cl-easing-select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
 /* -- Segmented control (kept for any future in-panel segmented choice) -- */
 
 .cl-segmented {

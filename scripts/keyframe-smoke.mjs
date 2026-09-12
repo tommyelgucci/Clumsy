@@ -35,6 +35,7 @@ const engineState = () =>
       x: layer.transform.x.base,
       xKeys: layer.transform.x.keys.map((k) => k.frame),
       rotationKeys: layer.transform.rotation.keys.map((k) => k.frame),
+      rotationEasingAtFrame0: layer.transform.rotation.keys.find((k) => k.frame === 0)?.easing ?? null,
     };
   });
 
@@ -118,6 +119,20 @@ const rotationKeyBtn = page.locator('.cl-slider-row', { has: page.getByText('Rot
 await rotationKeyBtn.click(); // frame 0: adds a keyframe at 0°
 s = await engineState();
 check('a rotation keyframe now exists at frame 0', s.rotationKeys.includes(0), JSON.stringify(s.rotationKeys));
+
+console.log('\n— Easing: a select box appears next to the stopwatch once a keyframe exists here —');
+check('the new keyframe defaults to easeInOut', s.rotationEasingAtFrame0 === 'easeInOut', s.rotationEasingAtFrame0);
+const easingSelect = page.locator('.cl-slider-row', { has: page.getByText('Rotation', { exact: true }) }).locator('.cl-easing-select');
+await easingSelect.selectOption('linear');
+s = await engineState();
+check('changing the easing select updates the keyframe’s easing', s.rotationEasingAtFrame0 === 'linear', s.rotationEasingAtFrame0);
+check('the easing change did not move or add/remove any keyframe', s.rotationKeys.length === 1 && s.rotationKeys.includes(0), JSON.stringify(s.rotationKeys));
+await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z'); // undo the easing change
+s = await engineState();
+check('undo restores the previous easing', s.rotationEasingAtFrame0 === 'easeInOut', s.rotationEasingAtFrame0);
+await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+z' : 'Control+Shift+z'); // redo it
+s = await engineState();
+check('redo brings the easing change back', s.rotationEasingAtFrame0 === 'linear', s.rotationEasingAtFrame0);
 
 await page.getByRole('button', { name: 'Next frame' }).click();
 s = await engineState();

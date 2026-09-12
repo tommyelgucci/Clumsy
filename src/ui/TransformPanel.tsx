@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { TRANSFORM_LABELS, TRANSFORM_PROPS, type Keyframe, type TransformProp } from '../core/document';
+import { EASING_LABELS, EASINGS, TRANSFORM_LABELS, TRANSFORM_PROPS, type Easing, type Keyframe, type TransformProp } from '../core/document';
 import type { Engine } from '../gl/engine';
 import { KeyframeIcon } from './icons';
+
+const EASING_OPTIONS = Object.keys(EASINGS) as Easing[];
 
 const RAD_TO_DEG = 180 / Math.PI;
 const DEG_TO_RAD = Math.PI / 180;
@@ -36,6 +38,14 @@ const RANGES: Record<TransformProp, { min: number; max: number; step: number; to
  * `Slider.tsx` (`onBeginChange`/`onCommitChange`), reimplemented here
  * directly on native events rather than porting that component, since a
  * single row of sliders doesn't need its own custom-drawn control.
+ *
+ * Easing (task 2.18): a small `<select>` next to the stopwatch, shown
+ * only when there's actually a keyframe at the current frame to attach
+ * an easing choice to — changing it doesn't move the keyframe, just how
+ * the animation approaches/leaves it (`core/document.ts`'s `EASINGS`,
+ * already the renderer's own interpolation since task 2.1; every
+ * keyframe just defaulted to `easeInOut` until now since nothing
+ * exposed a way to change it).
  */
 function TransformSlider({ engine, prop }: { engine: Engine; prop: TransformProp }) {
   const range = RANGES[prop];
@@ -50,20 +60,37 @@ function TransformSlider({ engine, prop }: { engine: Engine; prop: TransformProp
   const value = engine.getLayerTransformValue(prop);
   const keyframed = engine.layerTransformIsKeyframed(prop);
   const hasKeyHere = engine.hasKeyframeAtCurrentFrame(prop);
+  const easing = engine.getKeyframeEasing(prop);
 
   return (
     <div className="cl-slider-row">
       <div className="cl-section-header">
         <span>{TRANSFORM_LABELS[prop]}</span>
-        <button
-          className={`cl-railbtn cl-railbtn--ghost${keyframed ? ' is-active' : ''}`}
-          onClick={() => engine.toggleKeyframeHere(prop)}
-          aria-pressed={hasKeyHere}
-          aria-label={`${hasKeyHere ? 'Remove' : 'Add'} ${TRANSFORM_LABELS[prop]} keyframe here`}
-          title={keyframed ? 'Animated — click to add/remove a keyframe here' : 'Click to start animating this property'}
-        >
-          <KeyframeIcon size={12} filled={hasKeyHere} />
-        </button>
+        <div className="cl-keyframe-controls">
+          {hasKeyHere && easing && (
+            <select
+              className="cl-easing-select"
+              value={easing}
+              onChange={(e) => engine.setKeyframeEasing(prop, e.target.value as Easing)}
+              aria-label={`${TRANSFORM_LABELS[prop]} easing`}
+            >
+              {EASING_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {EASING_LABELS[opt]}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            className={`cl-railbtn cl-railbtn--ghost${keyframed ? ' is-active' : ''}`}
+            onClick={() => engine.toggleKeyframeHere(prop)}
+            aria-pressed={hasKeyHere}
+            aria-label={`${hasKeyHere ? 'Remove' : 'Add'} ${TRANSFORM_LABELS[prop]} keyframe here`}
+            title={keyframed ? 'Animated — click to add/remove a keyframe here' : 'Click to start animating this property'}
+          >
+            <KeyframeIcon size={12} filled={hasKeyHere} />
+          </button>
+        </div>
       </div>
       <input
         type="range"

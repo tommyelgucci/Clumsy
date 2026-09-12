@@ -1,3 +1,30 @@
+# Checkpoint — Progress log
+
+### 2026-09-12 — Task 2.18 (done): easing curve editing for keyframes
+
+Named as a real gap in task 2.16's own verify_note: every keyframe
+defaulted to `easeInOut` with no way to change it. New
+`Engine.getKeyframeEasing`/`setKeyframeEasing` and a `<select>` in the
+Transform panel, shown only when the current frame actually has a
+keyframe to attach an easing choice to.
+
+Building this surfaced a real interaction with an existing, deliberate
+behavior: `core/document.ts`'s `setKeyframe` intentionally ignores
+whatever easing is passed when updating an existing keyframe (a
+documented invariant, its own unit test names it directly), so a plain
+value drag can't accidentally reset a carefully-chosen easing. The first
+version of `setKeyframeEasing` went through `setKeyframe` anyway and
+silently did nothing — caught by a Playwright check reading the actual
+keyframe's easing back from the engine, not just the DOM select's own
+value. Fixed by mutating the found keyframe's `easing` field directly
+instead, since "change this keyframe's easing" is a genuinely different
+operation from "set/move a keyframe's value."
+
+Verified by extending the existing `keyframe-smoke.mjs` rather than a
+new script, since this is a direct extension of the same panel. Full
+11-script Playwright suite, 138 unit tests, `tsc`, `lint`, and `build`
+all clean.
+
 ### 2026-09-12 — Task 3.4 (in_progress, one disclosed gap): Cloud Function — receipt validation
 
 Built ahead of 3.3 (needs a real StoreKit client and device) the same

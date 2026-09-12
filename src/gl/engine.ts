@@ -114,6 +114,7 @@ import {
   uid,
   type Cel,
   type ClumsyloopDocument,
+  type Easing,
   type Keyframe,
   type Layer,
   type TransformProp,
@@ -483,6 +484,40 @@ export class Engine {
     const after = this.snapshotChannel(prop);
     this.history.push({
       label: hadKeyHere ? `Remove ${prop} keyframe` : `Add ${prop} keyframe`,
+      redo: () => this.restoreChannel(prop, after),
+      undo: () => this.restoreChannel(prop, before),
+    });
+    this.renderAndPresent();
+  }
+
+  /** The easing of the keyframe sitting exactly at the current frame, or
+   *  `null` if there isn't one there — the UI only offers an easing
+   *  choice for a frame that actually has a keyframe to attach it to. */
+  getKeyframeEasing(prop: TransformProp): Easing | null {
+    const ch = this.activeLayer.transform[prop];
+    return ch.keys.find((k) => k.frame === this._currentFrame)?.easing ?? null;
+  }
+
+  /** Changes the easing of the keyframe at the current frame, keeping
+   *  its value untouched. Deliberately does NOT go through `setKeyframe`
+   *  — that function's own update path intentionally ignores whatever
+   *  easing is passed in and keeps the existing one (see its doc
+   *  comment and core/document.test.ts's own test naming this exact
+   *  behavior), precisely so a plain value drag on an already-keyframed
+   *  property (`previewLayerTransformValue`) can't accidentally reset a
+   *  carefully-chosen easing back to the default. Changing the easing
+   *  on purpose is a different operation from that, so this mutates the
+   *  found keyframe's `easing` field directly instead. No-op if there's
+   *  no keyframe there, or it's already set to `easing`. */
+  setKeyframeEasing(prop: TransformProp, easing: Easing) {
+    const ch = this.activeLayer.transform[prop];
+    const existing = ch.keys.find((k) => k.frame === this._currentFrame);
+    if (!existing || existing.easing === easing) return;
+    const before = this.snapshotChannel(prop);
+    existing.easing = easing;
+    const after = this.snapshotChannel(prop);
+    this.history.push({
+      label: `${prop} easing`,
       redo: () => this.restoreChannel(prop, after),
       undo: () => this.restoreChannel(prop, before),
     });
