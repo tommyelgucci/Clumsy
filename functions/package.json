@@ -8,7 +8,7 @@
   },
   "main": "lib/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "test": "node --import ./scripts/register-ts-loader.mjs --test src/*.test.ts",
     "lint": "tsc --noEmit"
   },

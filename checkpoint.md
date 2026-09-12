@@ -1,4 +1,37 @@
-# Checkpoint — Progress log
+### 2026-09-12 — Task 3.4 (in_progress, one disclosed gap): Cloud Function — receipt validation
+
+Built ahead of 3.3 (needs a real StoreKit client and device) the same
+way 5.2 was built ahead of 5.1's own UI half: the decision logic and
+HTTP/auth plumbing need no real client, only a fake App Store Server API
+response. Marked `in_progress`, not `done` — deliberately, because one
+real security gap remains and this project's own honesty bar (see the
+camera plugin's "written but unverified on real hardware" notes) doesn't
+allow calling that done.
+
+New `functions/src/appStoreAuth.ts` signs the ES256 JWT Apple's App Store
+Server API requires as auth, using Node's own `crypto` module (no added
+JWT-library dependency) — tested against a throwaway keypair generated
+at test time. `appStoreClient.ts` calls the real endpoint shape with an
+injectable `fetchImpl`. `transactionPayload.ts` decodes the JWS Apple
+returns and validates its shape, but does **not** verify the JWS
+signature against Apple's certificate chain — a deliberate, clearly
+disclosed gap: full X.509 chain validation up to Apple's real root CA is
+genuine security-critical crypto that can't be safely eyeballed into
+existence without a real Apple-signed payload to test against, which
+nothing in this environment can produce. Until that's added,
+`validateReceiptCallable` isn't safe to accept real payments with, even
+though every other piece — auth, the HTTP call, parsing, the entitlement
+decision (`entitlement.ts`), and rejecting without writing anything on
+any failure (`validateReceipt.ts`'s orchestration) — is built and tested.
+
+29 unit tests total, several named directly after this task's own
+acceptance criteria wording. Along the way, fixed a real gap in
+`functions/`'s own tooling (its tsconfig excluded test files from
+typechecking entirely — split into a type-checking config and a
+build-only one) and excluded `functions/` from the root ESLint config,
+which was linting it under browser-oriented rules never meant for a
+separate, self-contained Cloud Functions package. tsc, lint, and all 138
+web-app unit tests remain clean; no web app code touched.
 
 ### 2026-09-12 — Task 5.2 (done): Cloud Function — report crosses threshold, hide the clip
 

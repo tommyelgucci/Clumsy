@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { REPORT_THRESHOLD, shouldHideClip } from './moderation.ts';
+import { REPORT_THRESHOLD, shouldHideClip } from './moderation.js';
 
 describe('shouldHideClip', () => {
   test('below the threshold, the clip stays visible', () => {
