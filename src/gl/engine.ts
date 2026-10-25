@@ -180,6 +180,7 @@ export class Engine {
   private revisionListeners = new Set<() => void>();
   private _currentFrame = 0;
   private _onionSkin = false;
+  private _livePreview = false;
   /** Fixed ghost opacity — Trace's own onion skin has separately
    *  configurable before/after frame counts, opacity, and a tinted
    *  before/after color; this first pass covers only the single most
@@ -258,6 +259,37 @@ export class Engine {
     return this._onionSkin;
   }
 
+  get livePreviewEnabled(): boolean {
+    return this._livePreview;
+  }
+
+  /** The frame the next shutter press will write: one past the camera
+   *  layer's newest photo (0 before the first). */
+  get nextShotFrame(): number {
+    const frames = [...(this.cameraLayer?.cels.keys() ?? [])];
+    return frames.length === 0 ? 0 : Math.max(...frames) + 1;
+  }
+
+  /** Live camera view (task 2.3): the native/web preview sits BEHIND the
+   *  canvas, so while this is on the canvas renders with a transparent
+   *  background and without the camera layer's own photo at the current
+   *  frame — the live feed stands in for it, with drawn layers on top and
+   *  (if onion skin is on) the previous frame's ghost over the feed.
+   *  Turning it on parks the playhead on `nextShotFrame`, growing the
+   *  timeline by one if that is past its end, so "previous frame" is the
+   *  photo just shot; while it is on, `captureFrame` parks the playhead on
+   *  the following empty slot for the same reason. */
+  setLivePreview(enabled: boolean) {
+    if (this._livePreview === enabled) return;
+    this._livePreview = enabled;
+    if (enabled) {
+      const target = this.nextShotFrame;
+      if (target >= this.doc.frameCount) this.doc.frameCount = target + 1;
+      this.setCurrentFrame(target);
+    }
+    this.renderAndPresent();
+  }
+
   /** The first camera layer, if a photo has ever been captured. */
   get cameraLayer(): Layer | undefined {
     return this.doc.layers.find((l) => l.kind === 'camera');
@@ -286,22 +318,23 @@ export class Engine {
 
     const existing = this.cameraLayer;
     const layer = existing ?? newLayer('Camera', true, 'camera');
-    const frames = [...layer.cels.keys()];
-    const frame = frames.length === 0 ? 0 : Math.max(...frames) + 1;
+    const frame = this.nextShotFrame;
     const cel: Cel = { id: uid('cel'), surface: this.renderer.createSurface(`${layer.id}-cel`) };
     this.renderer.uploadImage(cel.surface, fitted);
 
     const fromFrame = this._currentFrame;
     const prevFrameCount = this.doc.frameCount;
-    const needsGrow = frame >= prevFrameCount;
+    // Live view parks the playhead on the next empty slot (see `setLivePreview`).
+    const landing = this._livePreview ? frame + 1 : frame;
+    const needsGrow = landing >= prevFrameCount;
     this.history.run({
       label: 'Capture frame',
       layerId: layer.id,
       redo: () => {
         if (!existing) this.doc.layers.unshift(layer);
         layer.cels.set(frame, cel);
-        if (needsGrow) this.doc.frameCount = frame + 1;
-        this._currentFrame = frame;
+        if (needsGrow) this.doc.frameCount = landing + 1;
+        this._currentFrame = landing;
       },
       undo: () => {
         layer.cels.delete(frame);
@@ -1320,6 +1353,23 @@ export class Engine {
   renderAndPresent() {
     const overlay = this.activeOverlay();
     let result: Surface;
+    if (this._livePreview) {
+      const acc = this.renderer.scratch('onionAcc');
+      this.renderer.clear(acc);
+      const base = { ...this.doc, paperAlpha: 0 };
+      if (this._onionSkin && this._currentFrame > 0) {
+        const ghost = this.renderer.renderDocumentFrame(base, this._currentFrame - 1);
+        this.renderer.drawOver(acc, ghost, Engine.ONION_OPACITY);
+      }
+      const liveDoc = { ...base, layers: base.layers.map((l) => (l.kind === 'camera' ? { ...l, visible: false } : l)) };
+      const current = this.renderer.renderDocumentFrame(liveDoc, this._currentFrame, overlay);
+      this.renderer.drawOver(acc, current, 1);
+      const canvas = this.renderer.canvas;
+      this.renderer.present(acc, mat3FromTRS(0, 0, 0, canvas.width, canvas.height), this.doc.paper, 0, 16, true);
+      this._revision++;
+      for (const fn of this.revisionListeners) fn();
+      return;
+    }
     if (this._onionSkin && this._currentFrame > 0) {
       const acc = this.renderer.scratch('onionAcc');
       if (this.doc.paperAlpha > 0) this.renderer.fill(acc, this.doc.paper, this.doc.paperAlpha);

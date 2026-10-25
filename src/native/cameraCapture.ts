@@ -1,5 +1,13 @@
 import { registerPlugin } from '@capacitor/core';
 
+/** A rectangle in CSS pixels (iOS points), relative to the viewport. */
+export interface PreviewRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface CameraCapturePlugin {
   /** Takes one photo through AVFoundation with whatever settings are currently active. */
   capturePhoto(): Promise<{ base64: string }>;
@@ -11,6 +19,14 @@ export interface CameraCapturePlugin {
   lockCaptureSettings(): Promise<void>;
   /** Reverts exposure/focus/white balance to continuous auto modes. */
   unlockCaptureSettings(): Promise<void>;
+  /**
+   * Shows the live camera feed in `rect`, BEHIND the webview — the web
+   * layer must render transparent over it (see `Engine.setLivePreview`).
+   * Calling it again just moves/resizes the preview.
+   */
+  startPreview(options: PreviewRect): Promise<void>;
+  /** Removes the live feed. The capture session itself keeps running. */
+  stopPreview(): Promise<void>;
 }
 
 /**
@@ -42,6 +58,28 @@ class CameraCaptureWeb implements CameraCapturePlugin {
     canvas.height = video.videoHeight;
     canvas.getContext('2d')!.drawImage(video, 0, 0);
     return { base64: canvas.toDataURL('image/jpeg', 0.92).split(',')[1] };
+  }
+
+  async startPreview(rect: PreviewRect): Promise<void> {
+    const video = await this.ensureVideo();
+    video.id = 'cl-live-video';
+    Object.assign(video.style, {
+      position: 'fixed',
+      left: `${rect.x}px`,
+      top: `${rect.y}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+      objectFit: 'cover',
+      zIndex: '-1',
+      pointerEvents: 'none',
+    });
+    if (!video.isConnected) document.body.prepend(video);
+    document.documentElement.classList.add('cl-live-web');
+  }
+
+  async stopPreview(): Promise<void> {
+    this.video?.remove();
+    document.documentElement.classList.remove('cl-live-web');
   }
 
   async lockCaptureSettings(): Promise<void> {}

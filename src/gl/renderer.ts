@@ -100,7 +100,7 @@ export class Renderer {
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     const gl = canvas.getContext('webgl2', {
-      alpha: false,
+      alpha: true,
       antialias: false,
       depth: false,
       stencil: false,
@@ -181,6 +181,7 @@ export class Renderer {
       'uCheckerScale',
       'uPaper',
       'uPaperAlpha',
+      'uTransparent',
     ]);
   }
 
@@ -498,8 +499,12 @@ export class Renderer {
     dst.version++;
   }
 
-  /** Final pass to the screen, with the view transform and the paper. */
-  present(src: Surface, viewMatrix: Mat3, paper: RGB, paperAlpha: number, checkerScale: number) {
+  /** Final pass to the screen, with the view transform and the paper.
+   *  `transparent` outputs the (premultiplied) composite as-is, with no
+   *  paper, checkerboard, or backdrop clear — what the live camera view
+   *  needs so the native preview behind the webview shows through. The
+   *  context is created with `alpha: true` for exactly this. */
+  present(src: Surface, viewMatrix: Mat3, paper: RGB, paperAlpha: number, checkerScale: number, transparent = false) {
     const gl = this.gl;
     const p = this.programs.get('present')!;
     gl.useProgram(p.program);
@@ -507,9 +512,11 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.disable(gl.BLEND);
-    gl.clearColor(0.09, 0.09, 0.1, 1);
+    if (transparent) gl.clearColor(0, 0, 0, 0);
+    else gl.clearColor(0.09, 0.09, 0.1, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
+    gl.uniform1f(p.uniforms.uTransparent, transparent ? 1 : 0);
     gl.uniformMatrix3fv(p.uniforms.uMatrix, false, viewMatrix);
     gl.uniform2f(p.uniforms.uResolution, this.canvas.width, this.canvas.height);
     gl.uniform1f(p.uniforms.uFlipY, 1);

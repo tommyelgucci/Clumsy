@@ -683,6 +683,23 @@
 
 /* -- Capture UI (task 2.3): shutter, exposure lock, filmstrip -- */
 
+/* Live view: the camera feed is a layer behind the page (a <video> on web,
+   an AVCaptureVideoPreviewLayer on iOS), so the page itself goes clear. */
+html.cl-live,
+html.cl-live body {
+  background: transparent;
+}
+
+/* Web fallback only: its <video> is in the page, so the letterbox needs a
+   backdrop of its own; on iOS the native view behind the webview has one. */
+html.cl-live-web {
+  background: #121214;
+}
+
+html.cl-live .cl-app {
+  background: transparent;
+}
+
 .cl-rail--capture {
   right: var(--rail-gap);
   bottom: var(--rail-gap);

@@ -215,11 +215,16 @@ uniform vec2 uDocSize;
 uniform float uCheckerScale;  // checker cell size, document px
 uniform vec3 uPaper;          // paper color under the document
 uniform float uPaperAlpha;    // 0 = show checker, 1 = opaque paper
+uniform float uTransparent;   // 1 = output the premultiplied composite untouched
 
 out vec4 fragColor;
 
 void main() {
   vec4 src = texture(uSource, vUV);
+  if (uTransparent > 0.5) {
+    fragColor = src;
+    return;
+  }
 
   vec2 cell = floor(vUV * uDocSize / uCheckerScale);
   float checker = mod(cell.x + cell.y, 2.0) < 0.5 ? 0.22 : 0.28;

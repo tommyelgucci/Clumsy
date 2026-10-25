@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Engine } from '../gl/engine';
 import { CameraCapture } from '../native/cameraCapture';
-import { CameraIcon, LockIcon, UnlockIcon } from './icons';
+import { CameraIcon, LiveViewIcon, LockIcon, UnlockIcon } from './icons';
 
 /** How many frames either side of the playhead the filmstrip draws. A
  *  windowed strip, not a virtualized scroller: a stop-motion project is
@@ -23,6 +23,49 @@ export function CapturePanel({ engine }: { engine: Engine }) {
   const [locked, setLocked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const live = engine.livePreviewEnabled;
+
+  // Keep the preview glued to the document's on-screen rectangle (the
+  // canvas letterboxes the document with `object-fit: contain`) across
+  // resizes and rotation. `html.cl-live` makes every page background
+  // transparent so the preview behind the webview is visible.
+  useEffect(() => {
+    if (!live) return;
+    const canvas = engine.renderer.canvas;
+    const place = () => {
+      const box = canvas.getBoundingClientRect();
+      const scale = Math.min(box.width / engine.doc.width, box.height / engine.doc.height);
+      const width = engine.doc.width * scale;
+      const height = engine.doc.height * scale;
+      CameraCapture.startPreview({
+        x: box.left + (box.width - width) / 2,
+        y: box.top + (box.height - height) / 2,
+        width,
+        height,
+      }).catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(canvas);
+    window.addEventListener('resize', place);
+    document.documentElement.classList.add('cl-live');
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', place);
+      document.documentElement.classList.remove('cl-live');
+      CameraCapture.stopPreview().catch(() => {});
+    };
+  }, [engine, live]);
+  // Leaving the screen with the feed on must not leave it running.
+  useEffect(() => () => engine.setLivePreview(false), [engine]);
+
+  function toggleLive() {
+    setError(null);
+    const next = !live;
+    // The ghost of the last shot over the feed is the point of live view.
+    if (next) engine.setOnionSkin(true);
+    engine.setLivePreview(next);
+  }
 
   async function toggleLock() {
     setError(null);
@@ -68,6 +111,9 @@ export function CapturePanel({ engine }: { engine: Engine }) {
       </div>
 
       <div className="cl-rail cl-rail--capture">
+        <button className="cl-railbtn" aria-pressed={live} onClick={toggleLive} aria-label="Live view" title="Live camera view">
+          <LiveViewIcon />
+        </button>
         <button
           className="cl-railbtn"
           aria-pressed={locked}

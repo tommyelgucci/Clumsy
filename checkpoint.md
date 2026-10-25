@@ -1,5 +1,37 @@
 # Checkpoint — Progress log
 
+### 2026-10-25 — Live camera view behind the canvas (task 2.3, follow-up)
+
+The gap the previous entry left open: no live preview, so on a device you
+couldn't see the scene or line up against the onion-skin ghost.
+
+- **Architecture:** the feed is a layer BEHIND the webview (an
+  `AVCaptureVideoPreviewLayer` on iOS, a `<video>` in the web fallback) and
+  the canvas renders transparent over it. `Renderer`'s GL context is now
+  `alpha: true` and `present(..., transparent)` outputs the premultiplied
+  composite with no paper/checker/backdrop clear (shader `uTransparent`).
+- **`Engine.setLivePreview`**: while on, the current frame renders without
+  the camera layer's own photo (the feed stands in for it), drawn layers on
+  top, and the previous frame's ghost over the feed. Enabling it parks the
+  playhead on `nextShotFrame`; a live `captureFrame` parks it on the next
+  empty slot, so "previous frame" is always the shot just taken. Turning
+  live view on also turns onion skin on.
+- **Plugin API:** `startPreview({x,y,width,height})` (CSS px, calling again
+  moves it) and `stopPreview()`. `CapturePanel` computes the document's
+  letterboxed rect from the canvas, tracks resize, and toggles
+  `html.cl-live` to clear the page backgrounds.
+- **Verified headlessly** (`test:capture-smoke`, now 24 checks): preview
+  rect equals the document rect, the feed shows through the canvas, a live
+  shot parks the playhead correctly, the paper comes back when it's off.
+- **NOT verified: the Swift side.** `startPreview`/`stopPreview` in
+  `CameraCapturePlugin.swift` were written without a Swift compiler or a
+  device. Things to check on hardware first: that it compiles, that the
+  preview layer actually appears behind the (now non-opaque) webview and
+  lines up with the canvas, the rotation (`videoRotationAngle = 90` is
+  portrait-only; landscape iPad is unhandled), `webView.frame.origin`
+  offset if a content inset is ever set, and that the page's own
+  backgrounds are clear (the html/body rule is in `drawing.css`).
+
 ### 2026-10-25 — Capture UI: shutter, exposure lock, filmstrip (task 2.3)
 
 Onion skin and frame stepping already existed (task 2.14); this adds the
