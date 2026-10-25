@@ -700,6 +700,11 @@ html.cl-live .cl-app {
   background: transparent;
 }
 
+/* The dev harnesses below the screen (ui/App.tsx) would show through. */
+html.cl-live #root > :not(.cl-app) {
+  visibility: hidden;
+}
+
 .cl-rail--capture {
   right: var(--rail-gap);
   bottom: var(--rail-gap);
