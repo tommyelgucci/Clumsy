@@ -1,5 +1,36 @@
 # Checkpoint — Progress log
 
+### 2026-10-25 — Capture UI: shutter, exposure lock, filmstrip (task 2.3)
+
+Onion skin and frame stepping already existed (task 2.14); this adds the
+camera-dependent half.
+
+- **`Engine.captureFrame(source)`**: a photo becomes a cel on the camera
+  layer, one frame after the last photo (stop motion always appends,
+  wherever the playhead is), and the playhead moves onto it. First capture
+  creates the camera layer at the BOTTOM of the stack. The photo is
+  cover-fitted to the document (`coverRect` in `core/math.ts`, unit
+  tested). One undo step covers the cel, the layer creation, and the
+  timeline growth. The active drawing layer is left alone.
+- **`Engine.frameThumbnail(frame)` + `Renderer.toThumbnail`**: composite
+  thumbnails cached per frame, keyed on every layer's cel/surface version,
+  visibility, opacity, blend, and sampled transform.
+- **`ui/CapturePanel.tsx`**: shutter, exposure/focus lock toggle, and a
+  filmstrip windowed to +-10 frames around the playhead (not a virtualized
+  scroller — prev/next in `Timeline` reaches the rest).
+- **Web fallback in `native/cameraCapture.ts`** (getUserMedia) so the flow
+  runs in `npm run dev` and headless. Lock/unlock are no-ops there.
+- **`npm run test:capture-smoke`** passes; timeline/layers/undo/
+  persistence/renderer smokes, lint, build, and unit tests still pass.
+
+**Not done, on purpose:** the native plugin has no live preview, so on a
+device the user can't see the scene (or the onion-skin ghost over it)
+before shooting. That needs an AVCaptureVideoPreviewLayer or streamed
+frames under the transparent webview — unwritten and unverifiable without
+Xcode/device. Also unverified on hardware: the shutter against the real
+plugin. Task 2.3 stays `in_progress`. Open product question: the timeline
+still defaults to 24 frames, so frames past the last shot just hold it.
+
 ### 2026-09-12 — Six fixes from a Codex review of PR #6
 
 A Codex review (`chatgpt-codex-connector[bot]`) left six findings on PR

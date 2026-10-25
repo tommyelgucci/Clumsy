@@ -137,6 +137,7 @@ import {
   removeKeyframe,
   sampleChannel,
   setKeyframe,
+  TRANSFORM_PROPS,
   uid,
   type Cel,
   type ClumsyloopDocument,
@@ -146,7 +147,7 @@ import {
   type TransformProp,
 } from '../core/document';
 import { extractRect } from '../core/flood';
-import { clamp, mat3FromTRS } from '../core/math';
+import { clamp, coverRect, mat3FromTRS } from '../core/math';
 import { maskContains, polygonBounds, rasterizePolygon } from '../core/selection';
 import { clampRect, emptyRect, expandRect, rectIsEmpty, type DocPoint, type InputSample, type RGB, type Rect, type Stamp } from '../core/types';
 import type { FloodFillResponse } from '../workers/floodFill.worker';
@@ -255,6 +256,88 @@ export class Engine {
 
   get onionSkinEnabled(): boolean {
     return this._onionSkin;
+  }
+
+  /** The first camera layer, if a photo has ever been captured. */
+  get cameraLayer(): Layer | undefined {
+    return this.doc.layers.find((l) => l.kind === 'camera');
+  }
+
+  /** Shutter (task 2.3): turns a captured photo into a new cel on the
+   *  camera layer, one frame after the last photo already taken — so
+   *  stop motion always appends, wherever the playhead happens to be —
+   *  and moves the playhead onto it. Creates the camera layer on the
+   *  first capture, at the BOTTOM of the stack: photos are the backdrop
+   *  hand-drawn layers sit on. The photo is scaled to cover the
+   *  document (`coverRect`), cropping whatever overflows, since the
+   *  sensor's aspect ratio rarely matches the project's format.
+   *  Undoable as one step, including the layer creation and the
+   *  timeline growing to fit; like `deleteCel`, the undone cel's surface
+   *  isn't released since redo can still bring it back. The active
+   *  drawing layer is left alone so the user can keep inking between
+   *  shots. */
+  captureFrame(source: ImageBitmap | HTMLCanvasElement): Cel {
+    const { width: docW, height: docH } = this.doc;
+    const fitted = document.createElement('canvas');
+    fitted.width = docW;
+    fitted.height = docH;
+    const r = coverRect(source.width, source.height, docW, docH);
+    fitted.getContext('2d')!.drawImage(source, r.x, r.y, r.w, r.h);
+
+    const existing = this.cameraLayer;
+    const layer = existing ?? newLayer('Camera', true, 'camera');
+    const frames = [...layer.cels.keys()];
+    const frame = frames.length === 0 ? 0 : Math.max(...frames) + 1;
+    const cel: Cel = { id: uid('cel'), surface: this.renderer.createSurface(`${layer.id}-cel`) };
+    this.renderer.uploadImage(cel.surface, fitted);
+
+    const fromFrame = this._currentFrame;
+    const prevFrameCount = this.doc.frameCount;
+    const needsGrow = frame >= prevFrameCount;
+    this.history.run({
+      label: 'Capture frame',
+      layerId: layer.id,
+      redo: () => {
+        if (!existing) this.doc.layers.unshift(layer);
+        layer.cels.set(frame, cel);
+        if (needsGrow) this.doc.frameCount = frame + 1;
+        this._currentFrame = frame;
+      },
+      undo: () => {
+        layer.cels.delete(frame);
+        if (!existing) this.doc.layers.splice(this.doc.layers.indexOf(layer), 1);
+        if (needsGrow) this.doc.frameCount = prevFrameCount;
+        this._currentFrame = fromFrame;
+      },
+    });
+    this.renderAndPresent();
+    return cel;
+  }
+
+  private thumbnails = new Map<number, { key: string; canvas: HTMLCanvasElement }>();
+
+  /** A small composite of `frame` for the filmstrip. Cached per frame
+   *  and rebuilt only when something that frame shows has changed (any
+   *  layer's cel/surface version, visibility, opacity, blend, or sampled
+   *  transform), so scrolling a filmstrip of hundreds of photos doesn't
+   *  re-read the GPU for frames nobody touched. Must not be called while
+   *  a frame composite is being held across the call — it reuses the
+   *  renderer's accumulator scratches (see `renderDocumentFrame`). */
+  frameThumbnail(frame: number, maxEdge = 96): HTMLCanvasElement {
+    const key =
+      `${maxEdge}|${this.doc.paperAlpha}|` +
+      this.doc.layers
+        .map((l) => {
+          const cel = celAt(l, frame);
+          const t = TRANSFORM_PROPS.map((p) => sampleChannel(l.transform[p], frame)).join(',');
+          return `${l.id}:${l.visible}:${l.opacity}:${l.blend}:${l.clipToBelow}:${cel?.id ?? '-'}:${cel?.surface.version ?? 0}:${t}`;
+        })
+        .join(';');
+    const hit = this.thumbnails.get(frame);
+    if (hit && hit.key === key) return hit.canvas;
+    const canvas = this.renderer.toThumbnail(this.renderer.renderDocumentFrame(this.doc, frame), maxEdge);
+    this.thumbnails.set(frame, { key, canvas });
+    return canvas;
   }
 
   /** Moves the timeline playhead. Ends any in-progress stroke first (same

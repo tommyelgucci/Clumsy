@@ -70,9 +70,9 @@
           "depends_on": ["2.2"],
           "description": "Main capture screen — shutter button that calls the native plugin, onion-skin overlay of the previous frame, filmstrip thumbnail strip.",
           "acceptance_criteria": "WHEN the user taps the shutter THE SYSTEM SHALL add a new frame to the filmstrip and update the onion skin to show that frame as a reference for the next one.",
-          "verify_command": null,
-          "verify_note": "Manual verification on device.",
-          "status": "pending"
+          "verify_command": "npm run test:capture-smoke",
+          "verify_note": "JS/engine side passes as of 2026-10-25 (headless Chromium with a fake video device, through a getUserMedia fallback in native/cameraCapture.ts): shutter appends a cel to a camera layer created at the bottom of the stack, filmstrip thumbnails (windowed +-10 frames around the playhead, cached per frame), undo, onion skin over photos. NOT done: the native plugin has no live preview, so on a device the user can't see the scene or the onion-skin ghost over it before pressing the shutter — that needs an AVCaptureVideoPreviewLayer (or streamed frames) behind the transparent webview, unwritten and unverifiable without Xcode/device. The exposure lock is an explicit toggle, not automatic before the first shot. Both plus the 10-frames-no-flicker check (1.3) need a physical device.",
+          "status": "in_progress"
         },
         {
           "id": "2.4",

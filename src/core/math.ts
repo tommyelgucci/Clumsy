@@ -7,6 +7,17 @@ export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 export const TAU = Math.PI * 2;
 
+/** Where to draw a `srcW`x`srcH` image so it covers a `dstW`x`dstH`
+ *  rectangle completely (CSS `object-fit: cover`): uniformly scaled, centered,
+ *  with the overflowing axis cropped. How a captured photo, whatever the
+ *  sensor's aspect ratio, gets fitted to the document's canvas. */
+export function coverRect(srcW: number, srcH: number, dstW: number, dstH: number): { x: number; y: number; w: number; h: number } {
+  const scale = Math.max(dstW / srcW, dstH / srcH);
+  const w = srcW * scale;
+  const h = srcH * scale;
+  return { x: (dstW - w) / 2, y: (dstH - h) / 2, w, h };
+}
+
 /** Rounds an angle (radians) to the nearest multiple of `step`. */
 export const snapAngle = (angle: number, step: number) => Math.round(angle / step) * step;
 

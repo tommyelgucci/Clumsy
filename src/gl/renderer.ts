@@ -609,6 +609,26 @@ export class Renderer {
     return new ImageData(new Uint8ClampedArray(px.buffer as ArrayBuffer), this.docWidth, this.docHeight);
   }
 
+  /** A downscaled copy of the whole surface, longest edge `maxEdge`
+   *  pixels, for filmstrip thumbnails. Reads back at full size and lets
+   *  the 2D canvas do the downscale — simple, and callers cache the
+   *  result (`Engine.frameThumbnail`), so this runs once per change,
+   *  not once per redraw. */
+  toThumbnail(s: Surface, maxEdge: number): HTMLCanvasElement {
+    const full = document.createElement('canvas');
+    full.width = this.docWidth;
+    full.height = this.docHeight;
+    full.getContext('2d')!.putImageData(this.toImageData(s), 0, 0);
+    const scale = maxEdge / Math.max(this.docWidth, this.docHeight);
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(this.docWidth * scale));
+    out.height = Math.max(1, Math.round(this.docHeight * scale));
+    const ctx = out.getContext('2d')!;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(full, 0, 0, out.width, out.height);
+    return out;
+  }
+
   identity(): Mat3 {
     return mat3Identity();
   }
