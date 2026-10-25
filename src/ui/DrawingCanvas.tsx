@@ -11,6 +11,7 @@ import { FloatingPanel } from './FloatingPanel';
 import { BucketIcon, CloseIcon, DuplicateFrameIcon, LassoIcon, LayersIcon, NewProjectIcon, PencilIcon, RedoIcon, TransformIcon, TrashIcon, UndoIcon } from './icons';
 import { LayersPanel } from './LayersPanel';
 import { CapturePanel } from './CapturePanel';
+import { ExportButton } from './ExportButton';
 import { Timeline } from './Timeline';
 import { TransformPanel } from './TransformPanel';
 import { usePalettes } from '../state/palettes';
@@ -584,6 +585,12 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
             <button className="cl-railbtn" aria-pressed={activePanel === 'project'} onClick={() => togglePanel('project')} aria-label="New project" title="New project">
               <NewProjectIcon />
             </button>
+            <span className="cl-rail-divider" />
+          </>
+        )}
+        {ready && engineRef.current && (
+          <>
+            <ExportButton engine={engineRef.current} />
             <span className="cl-rail-divider" />
           </>
         )}

@@ -18,6 +18,7 @@
     "test:wet-stroke-smoke": "node scripts/wet-stroke-smoke.mjs",
     "test:timeline-smoke": "node scripts/timeline-smoke.mjs",
     "test:capture-smoke": "node scripts/capture-smoke.mjs",
+    "test:export-smoke": "node scripts/export-smoke.mjs",
     "test:new-project-smoke": "node scripts/new-project-smoke.mjs",
     "test:keyframe-smoke": "node scripts/keyframe-smoke.mjs",
     "test:lasso-smoke": "node scripts/lasso-smoke.mjs",
@@ -29,6 +30,7 @@
   },
   "dependencies": {
     "@capacitor/core": "^8.5.0",
+    "mp4-muxer": "^5.2.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "upng-js": "^2.1.0",

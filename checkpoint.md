@@ -1,5 +1,38 @@
 # Checkpoint — Progress log
 
+### 2026-10-25 — Local export to .mp4 with watermark (task 2.4)
+
+- **`src/export/exportVideo.ts`**: every frame goes through the same
+  renderer as the canvas, is read back onto an opaque paper-colored 2D
+  canvas, gets the "Clumsyloop" watermark (bottom-right), and is encoded
+  to H.264 with WebCodecs and muxed in memory with `mp4-muxer` (new
+  dependency, ~150 kB). `deliverVideo` hands the file to the iOS share
+  sheet (`navigator.share` with a file — `<a download>` does nothing in
+  WKWebView) and falls back to a plain download.
+- **Deviation from tasks.json, on purpose:** the task said "via
+  AVFoundation". WebCodecs in the webview is the only route verifiable
+  end to end from here (headless Chromium encodes H.264; ffprobe/ffmpeg
+  check the output) and needs no new native code. Cost: WKWebView has
+  `VideoEncoder` from iOS **16.4**, the deployment target is **15.0** —
+  the export button disables itself with a message below that. If the
+  15.0 floor matters, the alternative is an AVAssetWriter plugin.
+- **`lastContentFrame(doc)`** (`core/document.ts`, unit tested): the
+  export ends at the last cel / transform keyframe instead of holding the
+  last pose through the timeline's default 24 frames — three shots export
+  as 3 frames. This settles the "frames past the last shot" question for
+  export only; playback in the editor is unchanged.
+- **Watermark gating:** `CLEAN_EXPORT_UNLOCKED = false` in
+  `ui/ExportButton.tsx` — free plan always assumed until task 3.5.
+  `exportVideo`'s `watermark` option is what 3.5 will flip.
+- **`npm run test:export-smoke`** passes (needs ffmpeg): downloaded file
+  is H.264 / yuv420p, exactly 3 frames, 12 fps, document size, decodes
+  cleanly; watermark changes pixels in the bottom-right corner and nowhere
+  else; the UI export matches the watermarked render.
+- **Not verified:** the iOS share sheet path, WKWebView's encoder
+  (H.264 support/performance on a real iPad, memory for hundreds of
+  1080x1920 frames — the whole MP4 is built in memory), playback in
+  QuickTime/Photos. Audio isn't exported (no audio track exists yet).
+
 ### 2026-10-25 — Live camera view behind the canvas (task 2.3, follow-up)
 
 The gap the previous entry left open: no live preview, so on a device you

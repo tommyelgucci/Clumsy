@@ -25,6 +25,7 @@ import {
   buildClipGroups,
   frameToTimecode,
   clampFrame,
+  lastContentFrame,
   type Cel,
 } from './document.ts';
 
@@ -353,5 +354,41 @@ describe('clampFrame', () => {
   test('rounds non-integer values', () => {
     const doc = newDocument(1, 1, 12, 24);
     assert.equal(clampFrame(doc, 5.6), 6);
+  });
+});
+
+describe('lastContentFrame', () => {
+  test('an empty document ends at frame 0', () => {
+    assert.equal(lastContentFrame(newDocument(100, 100, 12, 24)), 0);
+  });
+  test('ends at the last cel of a frame-by-frame layer, not at frameCount', () => {
+    const doc = newDocument(100, 100, 12, 24);
+    const layer = newLayer('a');
+    layer.cels.set(0, stubCel());
+    layer.cels.set(5, stubCel());
+    doc.layers.push(layer);
+    assert.equal(lastContentFrame(doc), 5);
+  });
+  test('a non-animated layer holds through and does not extend the end', () => {
+    const doc = newDocument(100, 100, 12, 24);
+    const bg = newLayer('bg', false);
+    bg.cels.set(9, stubCel());
+    doc.layers.push(bg);
+    assert.equal(lastContentFrame(doc), 0);
+  });
+  test('a transform keyframe past the last cel extends the end', () => {
+    const doc = newDocument(100, 100, 12, 24);
+    const layer = newLayer('a');
+    layer.cels.set(2, stubCel());
+    setKeyframe(layer.transform.x, 8, 50);
+    doc.layers.push(layer);
+    assert.equal(lastContentFrame(doc), 8);
+  });
+  test('never exceeds the last frame of the timeline', () => {
+    const doc = newDocument(100, 100, 12, 4);
+    const layer = newLayer('a');
+    layer.cels.set(10, stubCel());
+    doc.layers.push(layer);
+    assert.equal(lastContentFrame(doc), 3);
   });
 });

@@ -789,3 +789,23 @@ html.cl-live #root > div > :not(.cl-app) {
   color: var(--text);
   text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
 }
+
+/* -- Export (task 2.4): blocking progress / error overlay -- */
+
+.cl-export-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--text);
+  font-size: 15px;
+  text-align: center;
+  padding: 24px;
+}
+
+.cl-export-overlay[role='alert'] {
+  color: var(--danger);
+  cursor: pointer;
+}

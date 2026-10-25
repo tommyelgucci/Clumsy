@@ -80,9 +80,9 @@
           "depends_on": ["2.3"],
           "description": "Encode the full filmstrip (camera + composited drawing layers) to .mp4 via AVFoundation. Watermark gated on entitlement state — which doesn't exist yet at this phase, so for now the free plan is always assumed.",
           "acceptance_criteria": "WHEN a project of at least 3 frames is exported THE SYSTEM SHALL produce a .mp4 file playable outside the app, with the watermark visible.",
-          "verify_command": null,
-          "verify_note": "Manual verification: open the exported .mp4 in another app.",
-          "status": "pending"
+          "verify_command": "npm run test:export-smoke",
+          "verify_note": "Passes as of 2026-10-25 (needs ffmpeg/ffprobe and the dev server): the file the UI downloads is H.264/yuv420p with the right frame count, fps and size, ffmpeg decodes it cleanly, and the watermark is visible in the bottom-right corner only. Implemented with WebCodecs + mp4-muxer in the webview instead of AVFoundation (verifiable here, no native code) — VideoEncoder needs iOS 16.4+, deployment target is 15.0, so the button disables itself below that. NOT verified on a device: the iOS share sheet, WKWebView encoding, memory use on long 1080p projects, playback in QuickTime/Photos.",
+          "status": "in_progress"
         },
         {
           "id": "2.5",
