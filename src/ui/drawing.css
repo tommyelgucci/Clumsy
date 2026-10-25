@@ -701,7 +701,7 @@ html.cl-live .cl-app {
 }
 
 /* The dev harnesses below the screen (ui/App.tsx) would show through. */
-html.cl-live #root > :not(.cl-app) {
+html.cl-live #root > div > :not(.cl-app) {
   visibility: hidden;
 }
 
