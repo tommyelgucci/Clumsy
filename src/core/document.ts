@@ -336,3 +336,17 @@ export function frameToTimecode(frame: number, fps: number): string {
 export function clampFrame(doc: ClumsyloopDocument, frame: number): number {
   return clamp(Math.round(frame), 0, Math.max(0, doc.frameCount - 1));
 }
+
+/** The last frame that actually has something in it — the last cel of any
+ *  frame-by-frame layer or the last transform keyframe of any layer — so
+ *  an export ends where the animation does instead of holding the final
+ *  pose through the timeline's spare default length. Always at least 0,
+ *  never past `frameCount - 1`. */
+export function lastContentFrame(doc: ClumsyloopDocument): number {
+  let last = 0;
+  for (const layer of doc.layers) {
+    if (layer.animated) for (const f of layer.cels.keys()) last = Math.max(last, f);
+    for (const prop of TRANSFORM_PROPS) for (const k of layer.transform[prop].keys) last = Math.max(last, k.frame);
+  }
+  return clamp(last, 0, Math.max(0, doc.frameCount - 1));
+}

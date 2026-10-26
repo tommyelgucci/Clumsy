@@ -137,6 +137,7 @@ import {
   removeKeyframe,
   sampleChannel,
   setKeyframe,
+  TRANSFORM_PROPS,
   uid,
   type Cel,
   type ClumsyloopDocument,
@@ -146,7 +147,7 @@ import {
   type TransformProp,
 } from '../core/document';
 import { extractRect } from '../core/flood';
-import { clamp, mat3FromTRS } from '../core/math';
+import { clamp, coverRect, mat3FromTRS } from '../core/math';
 import { maskContains, polygonBounds, rasterizePolygon } from '../core/selection';
 import { clampRect, emptyRect, expandRect, rectIsEmpty, type DocPoint, type InputSample, type RGB, type Rect, type Stamp } from '../core/types';
 import type { FloodFillResponse } from '../workers/floodFill.worker';
@@ -179,6 +180,7 @@ export class Engine {
   private revisionListeners = new Set<() => void>();
   private _currentFrame = 0;
   private _onionSkin = false;
+  private _livePreview = false;
   /** Fixed ghost opacity — Trace's own onion skin has separately
    *  configurable before/after frame counts, opacity, and a tinted
    *  before/after color; this first pass covers only the single most
@@ -255,6 +257,120 @@ export class Engine {
 
   get onionSkinEnabled(): boolean {
     return this._onionSkin;
+  }
+
+  get livePreviewEnabled(): boolean {
+    return this._livePreview;
+  }
+
+  /** The frame the next shutter press will write: one past the camera
+   *  layer's newest photo (0 before the first). */
+  get nextShotFrame(): number {
+    const frames = [...(this.cameraLayer?.cels.keys() ?? [])];
+    return frames.length === 0 ? 0 : Math.max(...frames) + 1;
+  }
+
+  /** Live camera view (task 2.3): the native/web preview sits BEHIND the
+   *  canvas, so while this is on the canvas renders with a transparent
+   *  background and without the camera layer's own photo at the current
+   *  frame — the live feed stands in for it, with drawn layers on top and
+   *  (if onion skin is on) the previous frame's ghost over the feed.
+   *  Turning it on parks the playhead on `nextShotFrame`, growing the
+   *  timeline by one if that is past its end, so "previous frame" is the
+   *  photo just shot; while it is on, `captureFrame` parks the playhead on
+   *  the following empty slot for the same reason. */
+  setLivePreview(enabled: boolean) {
+    if (this._livePreview === enabled) return;
+    this._livePreview = enabled;
+    if (enabled) {
+      const target = this.nextShotFrame;
+      if (target >= this.doc.frameCount) this.doc.frameCount = target + 1;
+      this.setCurrentFrame(target);
+    }
+    this.renderAndPresent();
+  }
+
+  /** The first camera layer, if a photo has ever been captured. */
+  get cameraLayer(): Layer | undefined {
+    return this.doc.layers.find((l) => l.kind === 'camera');
+  }
+
+  /** Shutter (task 2.3): turns a captured photo into a new cel on the
+   *  camera layer, one frame after the last photo already taken — so
+   *  stop motion always appends, wherever the playhead happens to be —
+   *  and moves the playhead onto it. Creates the camera layer on the
+   *  first capture, at the BOTTOM of the stack: photos are the backdrop
+   *  hand-drawn layers sit on. The photo is scaled to cover the
+   *  document (`coverRect`), cropping whatever overflows, since the
+   *  sensor's aspect ratio rarely matches the project's format.
+   *  Undoable as one step, including the layer creation and the
+   *  timeline growing to fit; like `deleteCel`, the undone cel's surface
+   *  isn't released since redo can still bring it back. The active
+   *  drawing layer is left alone so the user can keep inking between
+   *  shots. */
+  captureFrame(source: ImageBitmap | HTMLCanvasElement): Cel {
+    const { width: docW, height: docH } = this.doc;
+    const fitted = document.createElement('canvas');
+    fitted.width = docW;
+    fitted.height = docH;
+    const r = coverRect(source.width, source.height, docW, docH);
+    fitted.getContext('2d')!.drawImage(source, r.x, r.y, r.w, r.h);
+
+    const existing = this.cameraLayer;
+    const layer = existing ?? newLayer('Camera', true, 'camera');
+    const frame = this.nextShotFrame;
+    const cel: Cel = { id: uid('cel'), surface: this.renderer.createSurface(`${layer.id}-cel`) };
+    this.renderer.uploadImage(cel.surface, fitted);
+
+    const fromFrame = this._currentFrame;
+    const prevFrameCount = this.doc.frameCount;
+    // Live view parks the playhead on the next empty slot (see `setLivePreview`).
+    const landing = this._livePreview ? frame + 1 : frame;
+    const needsGrow = landing >= prevFrameCount;
+    this.history.run({
+      label: 'Capture frame',
+      layerId: layer.id,
+      redo: () => {
+        if (!existing) this.doc.layers.unshift(layer);
+        layer.cels.set(frame, cel);
+        if (needsGrow) this.doc.frameCount = landing + 1;
+        this._currentFrame = landing;
+      },
+      undo: () => {
+        layer.cels.delete(frame);
+        if (!existing) this.doc.layers.splice(this.doc.layers.indexOf(layer), 1);
+        if (needsGrow) this.doc.frameCount = prevFrameCount;
+        this._currentFrame = fromFrame;
+      },
+    });
+    this.renderAndPresent();
+    return cel;
+  }
+
+  private thumbnails = new Map<number, { key: string; canvas: HTMLCanvasElement }>();
+
+  /** A small composite of `frame` for the filmstrip. Cached per frame
+   *  and rebuilt only when something that frame shows has changed (any
+   *  layer's cel/surface version, visibility, opacity, blend, or sampled
+   *  transform), so scrolling a filmstrip of hundreds of photos doesn't
+   *  re-read the GPU for frames nobody touched. Must not be called while
+   *  a frame composite is being held across the call — it reuses the
+   *  renderer's accumulator scratches (see `renderDocumentFrame`). */
+  frameThumbnail(frame: number, maxEdge = 96): HTMLCanvasElement {
+    const key =
+      `${maxEdge}|${this.doc.paperAlpha}|` +
+      this.doc.layers
+        .map((l) => {
+          const cel = celAt(l, frame);
+          const t = TRANSFORM_PROPS.map((p) => sampleChannel(l.transform[p], frame)).join(',');
+          return `${l.id}:${l.visible}:${l.opacity}:${l.blend}:${l.clipToBelow}:${cel?.id ?? '-'}:${cel?.surface.version ?? 0}:${t}`;
+        })
+        .join(';');
+    const hit = this.thumbnails.get(frame);
+    if (hit && hit.key === key) return hit.canvas;
+    const canvas = this.renderer.toThumbnail(this.renderer.renderDocumentFrame(this.doc, frame), maxEdge);
+    this.thumbnails.set(frame, { key, canvas });
+    return canvas;
   }
 
   /** Moves the timeline playhead. Ends any in-progress stroke first (same
@@ -1237,6 +1353,23 @@ export class Engine {
   renderAndPresent() {
     const overlay = this.activeOverlay();
     let result: Surface;
+    if (this._livePreview) {
+      const acc = this.renderer.scratch('onionAcc');
+      this.renderer.clear(acc);
+      const base = { ...this.doc, paperAlpha: 0 };
+      if (this._onionSkin && this._currentFrame > 0) {
+        const ghost = this.renderer.renderDocumentFrame(base, this._currentFrame - 1);
+        this.renderer.drawOver(acc, ghost, Engine.ONION_OPACITY);
+      }
+      const liveDoc = { ...base, layers: base.layers.map((l) => (l.kind === 'camera' ? { ...l, visible: false } : l)) };
+      const current = this.renderer.renderDocumentFrame(liveDoc, this._currentFrame, overlay);
+      this.renderer.drawOver(acc, current, 1);
+      const canvas = this.renderer.canvas;
+      this.renderer.present(acc, mat3FromTRS(0, 0, 0, canvas.width, canvas.height), this.doc.paper, 0, 16, true);
+      this._revision++;
+      for (const fn of this.revisionListeners) fn();
+      return;
+    }
     if (this._onionSkin && this._currentFrame > 0) {
       const acc = this.renderer.scratch('onionAcc');
       if (this.doc.paperAlpha > 0) this.renderer.fill(acc, this.doc.paper, this.doc.paperAlpha);

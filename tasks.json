@@ -70,9 +70,9 @@
           "depends_on": ["2.2"],
           "description": "Main capture screen — shutter button that calls the native plugin, onion-skin overlay of the previous frame, filmstrip thumbnail strip.",
           "acceptance_criteria": "WHEN the user taps the shutter THE SYSTEM SHALL add a new frame to the filmstrip and update the onion skin to show that frame as a reference for the next one.",
-          "verify_command": null,
-          "verify_note": "Manual verification on device.",
-          "status": "pending"
+          "verify_command": "npm run test:capture-smoke",
+          "verify_note": "JS/engine side passes as of 2026-10-25 (headless Chromium with a fake video device, through a getUserMedia fallback in native/cameraCapture.ts): shutter appends a cel to a camera layer created at the bottom of the stack, filmstrip thumbnails (windowed +-10 frames around the playhead, cached per frame), undo, onion skin over photos. Live view added the same day: preview layer behind a transparent canvas, verified headlessly against the web fallback; the Swift startPreview/stopPreview were written WITHOUT a compiler or device and are untested (see checkpoint.md for the checklist; landscape is unhandled). The exposure lock is an explicit toggle, not automatic before the first shot. Both plus the 10-frames-no-flicker check (1.3) need a physical device.",
+          "status": "in_progress"
         },
         {
           "id": "2.4",
@@ -80,9 +80,9 @@
           "depends_on": ["2.3"],
           "description": "Encode the full filmstrip (camera + composited drawing layers) to .mp4 via AVFoundation. Watermark gated on entitlement state — which doesn't exist yet at this phase, so for now the free plan is always assumed.",
           "acceptance_criteria": "WHEN a project of at least 3 frames is exported THE SYSTEM SHALL produce a .mp4 file playable outside the app, with the watermark visible.",
-          "verify_command": null,
-          "verify_note": "Manual verification: open the exported .mp4 in another app.",
-          "status": "pending"
+          "verify_command": "npm run test:export-smoke",
+          "verify_note": "Passes as of 2026-10-25 (needs ffmpeg/ffprobe and the dev server): the file the UI downloads is H.264/yuv420p with the right frame count, fps and size, ffmpeg decodes it cleanly, and the watermark is visible in the bottom-right corner only. Implemented with WebCodecs + mp4-muxer in the webview instead of AVFoundation (verifiable here, no native code) — VideoEncoder needs iOS 16.4+, deployment target is 15.0, so the button disables itself below that. NOT verified on a device: the iOS share sheet, WKWebView encoding, memory use on long 1080p projects, playback in QuickTime/Photos.",
+          "status": "in_progress"
         },
         {
           "id": "2.5",

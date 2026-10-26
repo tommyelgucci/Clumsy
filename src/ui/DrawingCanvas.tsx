@@ -10,6 +10,8 @@ import './drawing.css';
 import { FloatingPanel } from './FloatingPanel';
 import { BucketIcon, CloseIcon, DuplicateFrameIcon, LassoIcon, LayersIcon, NewProjectIcon, PencilIcon, RedoIcon, TransformIcon, TrashIcon, UndoIcon } from './icons';
 import { LayersPanel } from './LayersPanel';
+import { CapturePanel } from './CapturePanel';
+import { ExportButton } from './ExportButton';
 import { Timeline } from './Timeline';
 import { TransformPanel } from './TransformPanel';
 import { usePalettes } from '../state/palettes';
@@ -586,6 +588,12 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
             <span className="cl-rail-divider" />
           </>
         )}
+        {ready && engineRef.current && (
+          <>
+            <ExportButton engine={engineRef.current} />
+            <span className="cl-rail-divider" />
+          </>
+        )}
         <button className="cl-railbtn cl-railbtn--danger" onClick={handleClear} aria-label="Clear" title="Clear layer">
           <TrashIcon />
         </button>
@@ -608,6 +616,7 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
       </div>
 
       {ready && engineRef.current && <Timeline engine={engineRef.current} />}
+      {ready && engineRef.current && <CapturePanel engine={engineRef.current} />}
 
       {activePanel === 'transform' && ready && engineRef.current && (
         <FloatingPanel title="Transform" onClose={() => setActivePanel(null)}>

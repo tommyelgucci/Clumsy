@@ -680,3 +680,132 @@
   border-color: var(--accent);
   color: var(--text);
 }
+
+/* -- Capture UI (task 2.3): shutter, exposure lock, filmstrip -- */
+
+/* Live view: the camera feed is a layer behind the page (a <video> on web,
+   an AVCaptureVideoPreviewLayer on iOS), so the page itself goes clear. */
+html.cl-live,
+html.cl-live body {
+  background: transparent;
+}
+
+/* Web fallback only: its <video> is in the page, so the letterbox needs a
+   backdrop of its own; on iOS the native view behind the webview has one. */
+html.cl-live-web {
+  background: #121214;
+}
+
+html.cl-live .cl-app {
+  background: transparent;
+}
+
+/* The dev harnesses below the screen (ui/App.tsx) would show through. */
+html.cl-live #root > div > :not(.cl-app) {
+  visibility: hidden;
+}
+
+.cl-rail--capture {
+  right: var(--rail-gap);
+  bottom: var(--rail-gap);
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.cl-shutter {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 3px solid var(--text);
+  background: var(--accent);
+  color: var(--accent-text);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.cl-shutter:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.cl-shutter:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cl-capture-error {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: max-content;
+  max-width: 240px;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.cl-filmstrip {
+  left: 50%;
+  bottom: calc(var(--rail-gap) + 68px);
+  transform: translateX(-50%);
+  max-width: calc(100vw - 2 * var(--rail-gap));
+  overflow-x: auto;
+  align-items: center;
+}
+
+.cl-thumb {
+  position: relative;
+  flex: none;
+  padding: 0;
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  cursor: pointer;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.cl-thumb.is-current {
+  border-color: var(--accent);
+}
+
+.cl-thumb canvas {
+  display: block;
+  height: 54px;
+  width: auto;
+}
+
+.cl-thumb__num {
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text);
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+}
+
+/* -- Export (task 2.4): blocking progress / error overlay -- */
+
+.cl-export-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--text);
+  font-size: 15px;
+  text-align: center;
+  padding: 24px;
+}
+
+.cl-export-overlay[role='alert'] {
+  color: var(--danger);
+  cursor: pointer;
+}

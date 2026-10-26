@@ -19,6 +19,7 @@ import {
   rgbToHex,
   hexToRgb,
   OneEuroFilter,
+  coverRect,
 } from './math.ts';
 
 const closeTo = (a: number, b: number, eps = 1e-6) => Math.abs(a - b) <= eps;
@@ -223,5 +224,24 @@ describe('OneEuroFilter', () => {
       last = f.filter(100, t);
     }
     assert.ok(last > 90, `${last} should have caught up to the jump`);
+  });
+});
+
+describe('coverRect', () => {
+  test('a wider photo is scaled to the target height and cropped left/right', () => {
+    const r = coverRect(4000, 3000, 1080, 1920);
+    assert.ok(closeTo(r.h, 1920));
+    assert.ok(closeTo(r.w, 2560));
+    assert.ok(closeTo(r.x, (1080 - 2560) / 2));
+    assert.ok(closeTo(r.y, 0));
+  });
+  test('a taller photo is scaled to the target width and cropped top/bottom', () => {
+    const r = coverRect(3000, 4000, 1080, 1080);
+    assert.ok(closeTo(r.w, 1080));
+    assert.ok(closeTo(r.h, 1440));
+    assert.ok(closeTo(r.y, -180));
+  });
+  test('a matching aspect ratio fills exactly', () => {
+    assert.deepEqual(coverRect(540, 960, 1080, 1920), { x: 0, y: 0, w: 1080, h: 1920 });
   });
 });

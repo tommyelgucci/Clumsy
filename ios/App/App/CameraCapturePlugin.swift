@@ -1,6 +1,7 @@
 import AVFoundation
 import Capacitor
 import Foundation
+import UIKit
 
 // capturePhoto() is scaffolding (task 1.2): a single unconfigured capture.
 // lockCaptureSettings()/unlockCaptureSettings() are the part that actually
@@ -15,6 +16,10 @@ public class CameraCapturePlugin: CAPPlugin {
     private var videoDevice: AVCaptureDevice?
     private var isConfigured = false
     private var pendingCall: CAPPluginCall?
+    // Live preview (task 2.3): an AVCaptureVideoPreviewLayer inserted BEHIND
+    // the webview, which is made transparent while it's showing. Touched on
+    // the main thread only.
+    private var previewLayer: AVCaptureVideoPreviewLayer?
 
     @objc func capturePhoto(_ call: CAPPluginCall) {
         call.keepAlive = true
@@ -35,6 +40,82 @@ public class CameraCapturePlugin: CAPPlugin {
                 let settings = AVCapturePhotoSettings()
                 self.photoOutput.capturePhoto(with: settings, delegate: self)
             }
+        }
+    }
+
+    // Shows the live feed in the given rect (CSS px == iOS points, relative
+    // to the webview) behind the page. Calling it again moves the preview.
+    // The web layer renders transparent over it — see Engine.setLivePreview.
+    @objc func startPreview(_ call: CAPPluginCall) {
+        guard
+            let x = call.getDouble("x"), let y = call.getDouble("y"),
+            let width = call.getDouble("width"), let height = call.getDouble("height")
+        else {
+            call.reject("startPreview needs x, y, width, height")
+            return
+        }
+        AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+            guard let self else { return }
+            guard granted else {
+                call.reject("Camera access denied")
+                return
+            }
+            self.sessionQueue.async {
+                do {
+                    try self.configureSessionIfNeeded()
+                } catch {
+                    call.reject(error.localizedDescription)
+                    return
+                }
+                DispatchQueue.main.async {
+                    guard let webView = self.bridge?.webView, let host = self.bridge?.viewController?.view else {
+                        call.reject("No web view to place the preview behind")
+                        return
+                    }
+                    let layer: AVCaptureVideoPreviewLayer
+                    if let existing = self.previewLayer {
+                        layer = existing
+                    } else {
+                        layer = AVCaptureVideoPreviewLayer(session: self.session)
+                        layer.videoGravity = .resizeAspectFill
+                        layer.masksToBounds = true
+                        host.layer.insertSublayer(layer, at: 0)
+                        host.backgroundColor = UIColor(red: 0.07, green: 0.07, blue: 0.08, alpha: 1)
+                        webView.isOpaque = false
+                        webView.backgroundColor = .clear
+                        webView.scrollView.backgroundColor = .clear
+                        self.previewLayer = layer
+                    }
+                    // Disable implicit animation so a resize doesn't swim.
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    layer.frame = CGRect(
+                        x: webView.frame.origin.x + x,
+                        y: webView.frame.origin.y + y,
+                        width: width,
+                        height: height
+                    )
+                    CATransaction.commit()
+                    if let connection = layer.connection {
+                        if #available(iOS 17.0, *) {
+                            connection.videoRotationAngle = 90
+                        } else {
+                            connection.videoOrientation = .portrait
+                        }
+                    }
+                    call.resolve()
+                }
+            }
+        }
+    }
+
+    @objc func stopPreview(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.previewLayer?.removeFromSuperlayer()
+            self.previewLayer = nil
+            self.bridge?.webView?.isOpaque = true
+            call.resolve()
         }
     }
 

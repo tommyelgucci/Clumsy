@@ -1,5 +1,101 @@
 # Checkpoint — Progress log
 
+### 2026-10-25 — Local export to .mp4 with watermark (task 2.4)
+
+- **`src/export/exportVideo.ts`**: every frame goes through the same
+  renderer as the canvas, is read back onto an opaque paper-colored 2D
+  canvas, gets the "Clumsyloop" watermark (bottom-right), and is encoded
+  to H.264 with WebCodecs and muxed in memory with `mp4-muxer` (new
+  dependency, ~150 kB). `deliverVideo` hands the file to the iOS share
+  sheet (`navigator.share` with a file — `<a download>` does nothing in
+  WKWebView) and falls back to a plain download.
+- **Deviation from tasks.json, on purpose:** the task said "via
+  AVFoundation". WebCodecs in the webview is the only route verifiable
+  end to end from here (headless Chromium encodes H.264; ffprobe/ffmpeg
+  check the output) and needs no new native code. Cost: WKWebView has
+  `VideoEncoder` from iOS **16.4**, the deployment target is **15.0** —
+  the export button disables itself with a message below that. If the
+  15.0 floor matters, the alternative is an AVAssetWriter plugin.
+- **`lastContentFrame(doc)`** (`core/document.ts`, unit tested): the
+  export ends at the last cel / transform keyframe instead of holding the
+  last pose through the timeline's default 24 frames — three shots export
+  as 3 frames. This settles the "frames past the last shot" question for
+  export only; playback in the editor is unchanged.
+- **Watermark gating:** `CLEAN_EXPORT_UNLOCKED = false` in
+  `ui/ExportButton.tsx` — free plan always assumed until task 3.5.
+  `exportVideo`'s `watermark` option is what 3.5 will flip.
+- **`npm run test:export-smoke`** passes (needs ffmpeg): downloaded file
+  is H.264 / yuv420p, exactly 3 frames, 12 fps, document size, decodes
+  cleanly; watermark changes pixels in the bottom-right corner and nowhere
+  else; the UI export matches the watermarked render.
+- **Not verified:** the iOS share sheet path, WKWebView's encoder
+  (H.264 support/performance on a real iPad, memory for hundreds of
+  1080x1920 frames — the whole MP4 is built in memory), playback in
+  QuickTime/Photos. Audio isn't exported (no audio track exists yet).
+
+### 2026-10-25 — Live camera view behind the canvas (task 2.3, follow-up)
+
+The gap the previous entry left open: no live preview, so on a device you
+couldn't see the scene or line up against the onion-skin ghost.
+
+- **Architecture:** the feed is a layer BEHIND the webview (an
+  `AVCaptureVideoPreviewLayer` on iOS, a `<video>` in the web fallback) and
+  the canvas renders transparent over it. `Renderer`'s GL context is now
+  `alpha: true` and `present(..., transparent)` outputs the premultiplied
+  composite with no paper/checker/backdrop clear (shader `uTransparent`).
+- **`Engine.setLivePreview`**: while on, the current frame renders without
+  the camera layer's own photo (the feed stands in for it), drawn layers on
+  top, and the previous frame's ghost over the feed. Enabling it parks the
+  playhead on `nextShotFrame`; a live `captureFrame` parks it on the next
+  empty slot, so "previous frame" is always the shot just taken. Turning
+  live view on also turns onion skin on.
+- **Plugin API:** `startPreview({x,y,width,height})` (CSS px, calling again
+  moves it) and `stopPreview()`. `CapturePanel` computes the document's
+  letterboxed rect from the canvas, tracks resize, and toggles
+  `html.cl-live` to clear the page backgrounds.
+- **Verified headlessly** (`test:capture-smoke`, now 24 checks): preview
+  rect equals the document rect, the feed shows through the canvas, a live
+  shot parks the playhead correctly, the paper comes back when it's off.
+- **NOT verified: the Swift side.** `startPreview`/`stopPreview` in
+  `CameraCapturePlugin.swift` were written without a Swift compiler or a
+  device. Things to check on hardware first: that it compiles, that the
+  preview layer actually appears behind the (now non-opaque) webview and
+  lines up with the canvas, the rotation (`videoRotationAngle = 90` is
+  portrait-only; landscape iPad is unhandled), `webView.frame.origin`
+  offset if a content inset is ever set, and that the page's own
+  backgrounds are clear (the html/body rule is in `drawing.css`).
+
+### 2026-10-25 — Capture UI: shutter, exposure lock, filmstrip (task 2.3)
+
+Onion skin and frame stepping already existed (task 2.14); this adds the
+camera-dependent half.
+
+- **`Engine.captureFrame(source)`**: a photo becomes a cel on the camera
+  layer, one frame after the last photo (stop motion always appends,
+  wherever the playhead is), and the playhead moves onto it. First capture
+  creates the camera layer at the BOTTOM of the stack. The photo is
+  cover-fitted to the document (`coverRect` in `core/math.ts`, unit
+  tested). One undo step covers the cel, the layer creation, and the
+  timeline growth. The active drawing layer is left alone.
+- **`Engine.frameThumbnail(frame)` + `Renderer.toThumbnail`**: composite
+  thumbnails cached per frame, keyed on every layer's cel/surface version,
+  visibility, opacity, blend, and sampled transform.
+- **`ui/CapturePanel.tsx`**: shutter, exposure/focus lock toggle, and a
+  filmstrip windowed to +-10 frames around the playhead (not a virtualized
+  scroller — prev/next in `Timeline` reaches the rest).
+- **Web fallback in `native/cameraCapture.ts`** (getUserMedia) so the flow
+  runs in `npm run dev` and headless. Lock/unlock are no-ops there.
+- **`npm run test:capture-smoke`** passes; timeline/layers/undo/
+  persistence/renderer smokes, lint, build, and unit tests still pass.
+
+**Not done, on purpose:** the native plugin has no live preview, so on a
+device the user can't see the scene (or the onion-skin ghost over it)
+before shooting. That needs an AVCaptureVideoPreviewLayer or streamed
+frames under the transparent webview — unwritten and unverifiable without
+Xcode/device. Also unverified on hardware: the shutter against the real
+plugin. Task 2.3 stays `in_progress`. Open product question: the timeline
+still defaults to 24 frames, so frames past the last shot just hold it.
+
 ### 2026-09-12 — Six fixes from a Codex review of PR #6
 
 A Codex review (`chatgpt-codex-connector[bot]`) left six findings on PR
