@@ -46,11 +46,15 @@ const bob = testEnv.authenticatedContext('bob');
 const anon = testEnv.unauthenticatedContext();
 
 const fakeVideo = new Uint8Array([1, 2, 3, 4]);
+const mp4 = { contentType: 'video/mp4' };
 
 console.log('— clips/{ownerId}/{clipId}: owner-only write/delete, public read —');
-await expectAllowed('the owner can upload under their own prefix', uploadBytes(ref(alice.storage(), 'clips/alice/clip-1'), fakeVideo));
-await expectDenied('a different user cannot upload under alice’s prefix', uploadBytes(ref(bob.storage(), 'clips/alice/clip-2'), fakeVideo));
-await expectDenied('an unauthenticated client cannot upload at all', uploadBytes(ref(anon.storage(), 'clips/alice/clip-3'), fakeVideo));
+await expectAllowed('the owner can upload under their own prefix', uploadBytes(ref(alice.storage(), 'clips/alice/clip-1'), fakeVideo, mp4));
+await expectDenied('a different user cannot upload under alice’s prefix', uploadBytes(ref(bob.storage(), 'clips/alice/clip-2'), fakeVideo, mp4));
+await expectDenied('an unauthenticated client cannot upload at all', uploadBytes(ref(anon.storage(), 'clips/alice/clip-3'), fakeVideo, mp4));
+await expectDenied('the owner cannot upload a non-video file', uploadBytes(ref(alice.storage(), 'clips/alice/not-a-video'), fakeVideo, { contentType: 'text/html' }));
+await expectDenied('the owner cannot upload without declaring a content type', uploadBytes(ref(alice.storage(), 'clips/alice/untyped'), fakeVideo));
+await expectDenied('a file over 100 MB is rejected', uploadBytes(ref(alice.storage(), 'clips/alice/huge'), new Uint8Array(100 * 1024 * 1024 + 1), mp4));
 await expectAllowed('anyone (even unauthenticated) can read a published clip', getBytes(ref(anon.storage(), 'clips/alice/clip-1')));
 await expectDenied('a different user cannot delete alice’s clip', deleteObject(ref(bob.storage(), 'clips/alice/clip-1')));
 await expectAllowed('the owner can delete their own clip', deleteObject(ref(alice.storage(), 'clips/alice/clip-1')));
