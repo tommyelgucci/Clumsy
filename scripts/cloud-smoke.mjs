@@ -11,13 +11,17 @@ import { join } from 'node:path';
 // entitlement. Needs ffmpeg/ffprobe, and the app served with
 // VITE_USE_FIREBASE_EMULATORS=true, e.g.:
 //
+//   npm --prefix functions run build
 //   VITE_USE_FIREBASE_EMULATORS=true npx vite --port 5174 &
-//   firebase emulators:exec --only auth,firestore,storage \
+//   firebase emulators:exec --only auth,firestore,storage,functions \
 //     --project demo-clumsyloop 'npm run test:cloud-smoke'
 //
-// The moderation Cloud Function can't run in this sandbox's emulator suite
-// (see tasks.json 5.2), so the one thing it would do — set `hidden` on a
-// reported clip — is simulated with an admin write, and labeled as such.
+// The Functions emulator is included so the REAL moderation trigger
+// (`onReportCreated`) hides a reported clip. In this sandbox the firebase CLI
+// must run with the proxy variables unset (HTTPS_PROXY, https_proxy,
+// GLOBAL_AGENT_HTTPS_PROXY, ...): otherwise it sends its own 127.0.0.1 call
+// to register the Firestore trigger through the egress proxy, which refuses
+// it, and the whole emulator suite shuts down.
 
 const APP = process.env.APP_URL || 'http://127.0.0.1:5174/';
 const FS = 'http://127.0.0.1:8080/v1/projects/demo-clumsyloop/databases/(default)/documents';
@@ -163,8 +167,13 @@ check('a reported clip leaves the reporter’s feed immediately', (await feed.lo
 const bobUid = await uidOf(bob);
 const reportDoc = await adminGet(`reports/${clipId}_${bobUid}`);
 check('the report document exists with the right reporter, clip, and reason', str(reportDoc, 'reporterId') === bobUid && str(reportDoc, 'clipId') === clipId && str(reportDoc, 'reason') === 'spam');
-// Simulates onReportCreated (task 5.2), which can't run in this sandbox's emulators.
-await admin(`clips/${clipId}?updateMask.fieldPaths=hidden`, { method: 'PATCH', body: JSON.stringify({ fields: { hidden: { booleanValue: true } } }) });
+// The real onReportCreated trigger (task 5.2) is what hides it.
+let hiddenByTrigger = false;
+for (let i = 0; i < 40 && !hiddenByTrigger; i++) {
+  hiddenByTrigger = (await adminGet(`clips/${clipId}`))?.fields?.hidden?.booleanValue === true;
+  if (!hiddenByTrigger) await new Promise((r) => setTimeout(r, 500));
+}
+check('the moderation trigger hid the reported clip', hiddenByTrigger);
 await feed.getByRole('button', { name: 'Close feed' }).click();
 await rail(bob, 'Feed').click();
 await bob.getByRole('dialog', { name: 'Feed' }).getByText('Nothing here yet.').waitFor({ timeout: 15000 });

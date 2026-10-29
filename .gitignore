@@ -21,3 +21,4 @@ firestore-debug.log
 ui-debug.log
 .firebase/
 
+dist-admin/

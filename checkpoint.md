@@ -1,5 +1,62 @@
 # Checkpoint — Progress log
 
+### 2026-10-29 — Internal review panel (task 5.3) and a working Functions emulator
+
+- **`functions/src/review.ts` (pure, unit-tested) + `reviewHandlers.ts`**:
+  two callables, `listReportedClips` and `reviewClip`. Both check the caller
+  has an `admins/{uid}` document first (`permission-denied` otherwise,
+  `unauthenticated` with no sign-in). The queue is one entry per reported
+  clip that still exists, **oldest report first**, each with a deadline of
+  24h after its oldest report (Apple's expectation) so working from the top
+  meets it. `reviewClip` does **restore** (`hidden: false`, reports
+  cleared) or **delete** (video file first, then the clip document and its
+  reports — so a failed file delete can be retried instead of orphaning the
+  file). A `storagePath` that isn't exactly `clips/{owner}/{clip}` is never
+  deleted from Storage. Every decision is written to `moderationLog` (who,
+  what, reasons, report count).
+- **Allowlist = Firestore `admins/{uid}`**, not an env var: changeable
+  without a redeploy, and `firestore.rules` now closes `admins` and
+  `moderationLog` to every client (written out explicitly, with tests). To
+  make someone a moderator, create an empty `admins/<their uid>` document in
+  the Firebase console; the panel tells a refused account exactly which
+  document to create.
+- **`admin/`: the panel**, a separate small Vite app (`npm run dev:admin`,
+  `npm run build:admin` → `dist-admin/`, served by Firebase Hosting —
+  `firebase.json` gained a `hosting` block with `noindex`). Deliberately NOT
+  part of the main build, since that is what Capacitor copies into the iOS
+  app and a moderation tool has no place in the App Store binary. Shows
+  each reported clip with a video player, caption, owner, report reasons
+  tallied, and a deadline label (ok / soon in the last 4h / OVERDUE by …).
+  Restore is one click; delete asks for a second confirming click.
+  Sign-in is Google popup (the Google provider must be enabled in the
+  console — unverified); against the emulators it is anonymous.
+- **The Functions emulator works in this sandbox after all.** It was
+  reported broken in 5.2: it shut down registering the Firestore trigger
+  with `request blocked: no rule allows host "127.0.0.1"`. Cause: the
+  firebase CLI sends its own 127.0.0.1 call through the egress proxy.
+  Running it with the proxy variables unset (`env -u HTTPS_PROXY -u
+  https_proxy -u GLOBAL_AGENT_HTTPS_PROXY …`) fixes it, so the real
+  `onReportCreated` trigger is now verified (a report hides the clip) and
+  `cloud-smoke` no longer simulates that step with an admin write. Needs
+  `npm --prefix functions run build` first (the emulator loads `lib/`).
+- **Verified:** `functions` unit tests (44) and `test:emulator` (handlers
+  against the real Firestore + Storage emulators: access control, queue
+  order, restore, delete incl. the file, tampered path, already-gone,
+  audit log, bad requests); `test:rules` (now also `admins`/`moderationLog`);
+  `test:admin-smoke` (the panel through its UI with all four emulators: the
+  trigger hides reported clips, queue order and urgency, restore, delete
+  with confirmation and Cancel, file gone from Storage, audit log, and a
+  second non-admin account refused both in the UI and calling `reviewClip`
+  directly); `cloud-smoke`. Mutation-checked: removing the admin check from
+  the handler makes four checks fail.
+- **Not verified / open:** Google sign-in for moderators and a real Firebase
+  project (deploying functions, rules, indexes, hosting); `listReportedClips`
+  reads at most 500 reports (oldest first, so the cap only ever hides the
+  newest — fine for v1, revisit if the backlog is ever that deep); nothing
+  notifies a moderator that a report arrived, so the 24-hour clock only
+  helps if someone opens the panel — worth a push/email alert before launch;
+  the admin chunk is ~680 kB (Firebase + React) and loads only for moderators.
+
 ### 2026-10-29 — Cloud client: publish, feed, report, block, entitlement gating (tasks 3.5, 4.1-4.3, 5.1)
 
 The server half (rules, Cloud Functions) existed; this is the client that

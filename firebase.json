@@ -25,5 +25,24 @@
     "auth": {
       "port": 9099
     }
+  },
+  "hosting": {
+    "public": "dist-admin",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "X-Robots-Tag",
+            "value": "noindex, nofollow"
+          }
+        ]
+      }
+    ]
   }
 }

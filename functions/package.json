@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "node --import ./scripts/register-ts-loader.mjs --test src/*.test.ts",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:emulator": "node --import ./scripts/register-ts-loader.mjs scripts/review-emulator-test.mjs"
   },
   "dependencies": {
     "firebase-admin": "^14.4.0",

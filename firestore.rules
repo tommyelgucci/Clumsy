@@ -116,6 +116,21 @@ service cloud.firestore {
       allow delete: if request.auth != null && request.auth.uid == resource.data.ownerId;
     }
 
+    // The internal review panel's allowlist (task 5.3): `admins/{uid}`
+    // existing is what makes a signed-in user a moderator in the review
+    // callables. Nobody can read or write it from a client — not even an
+    // admin about themselves — so the only ways to grant access are the
+    // Firebase console or Admin SDK code. (Firestore denies unmatched paths
+    // anyway; this is written out so the intent can't be undone by a
+    // future wildcard rule.) `moderationLog` is the audit trail those
+    // callables write, equally closed.
+    match /admins/{uid} {
+      allow read, write: if false;
+    }
+    match /moderationLog/{entryId} {
+      allow read, write: if false;
+    }
+
     // A report against a clip (task 5.1). Deliberately write-only from
     // the client's side: reads only ever happen through the moderation
     // Cloud Function (task 5.2) and the internal review panel (task

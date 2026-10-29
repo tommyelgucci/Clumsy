@@ -139,6 +139,12 @@ await expectDenied('a report cannot carry a forged timestamp', setDoc(doc(carol.
 await expectDenied('an unauthenticated client cannot file a report', setDoc(doc(anon.firestore(), 'reports/alice-clip_anon'), report('anon')));
 await expectDenied('no client, not even the reporter, can read reports back', getDoc(doc(bob.firestore(), 'reports/anything')));
 
+console.log('\n— admins and moderationLog: closed to every client —');
+await expectDenied('a user cannot make themselves an admin', setDoc(doc(alice.firestore(), 'admins/alice'), {}));
+await expectDenied('an admin cannot read the admin list as a client', getDoc(doc(alice.firestore(), 'admins/alice')));
+await expectDenied('nobody can read the moderation log', getDoc(doc(alice.firestore(), 'moderationLog/anything')));
+await expectDenied('nobody can write the moderation log', setDoc(doc(alice.firestore(), 'moderationLog/forged'), { adminUid: 'alice' }));
+
 await testEnv.cleanup();
 
 console.log(`\n${failures === 0 ? 'All checks passed.' : `${failures} check(s) failed.`}`);
