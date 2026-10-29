@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { addDoc, collection, doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 
 // Verifies firestore.rules (task 3.2) against the local Firestore
 // emulator — no real Firebase project needed, since `.firebaserc`'s
@@ -60,6 +60,7 @@ await testEnv.withSecurityRulesDisabled(async (context) => {
 
 const alice = testEnv.authenticatedContext('alice');
 const bob = testEnv.authenticatedContext('bob');
+const carol = testEnv.authenticatedContext('carol');
 const anon = testEnv.unauthenticatedContext();
 
 console.log('\n— users/{userId}: publicly readable, only the owner can write —');
@@ -92,18 +93,57 @@ console.log('\n— clips/{clipId}: public read unless hidden (the owner can stil
 await expectAllowed('anyone can read a non-hidden clip', getDoc(doc(anon.firestore(), 'clips/alice-clip')));
 await expectDenied("a different user cannot read alice's hidden clip", getDoc(doc(bob.firestore(), 'clips/alice-hidden-clip')));
 await expectAllowed('the owner can still read their own hidden clip', getDoc(doc(alice.firestore(), 'clips/alice-hidden-clip')));
-await expectAllowed('a user can publish a clip with themselves as owner', setDoc(doc(alice.firestore(), 'clips/second-alice-clip'), { ownerId: 'alice', videoUrl: 'https://example.invalid/x.mp4', hidden: false, createdAt: 3 }));
-await expectDenied('a user cannot publish a clip owned by someone else', setDoc(doc(bob.firestore(), 'clips/spoofed-clip'), { ownerId: 'alice', videoUrl: 'https://example.invalid/x.mp4', hidden: false, createdAt: 3 }));
-await expectDenied('a client cannot publish a clip already marked hidden', setDoc(doc(alice.firestore(), 'clips/preemptively-hidden'), { ownerId: 'alice', videoUrl: 'https://example.invalid/x.mp4', hidden: true, createdAt: 3 }));
+const newClip = (ownerId, clipId, over = {}) => ({
+  ownerId,
+  storagePath: `clips/${ownerId}/${clipId}`,
+  videoUrl: 'https://example.invalid/x.mp4',
+  caption: 'a walk cycle',
+  hidden: false,
+  createdAt: serverTimestamp(),
+  ...over,
+});
+await expectAllowed('a user can publish a well-formed clip with themselves as owner', setDoc(doc(alice.firestore(), 'clips/second-alice-clip'), newClip('alice', 'second-alice-clip')));
+await expectAllowed('a clip may omit the caption', setDoc(doc(alice.firestore(), 'clips/no-caption'), (({ caption, ...rest }) => rest)(newClip('alice', 'no-caption'))));
+await expectDenied('a user cannot publish a clip owned by someone else', setDoc(doc(bob.firestore(), 'clips/spoofed-clip'), newClip('alice', 'spoofed-clip')));
+await expectDenied('a client cannot publish a clip already marked hidden', setDoc(doc(alice.firestore(), 'clips/preemptively-hidden'), newClip('alice', 'preemptively-hidden', { hidden: true })));
+await expectDenied('a clip cannot carry fields outside the v1 schema (no likes)', setDoc(doc(alice.firestore(), 'clips/with-likes'), newClip('alice', 'with-likes', { likes: 9999 })));
+await expectDenied('a clip cannot be backdated: createdAt must be the server clock', setDoc(doc(alice.firestore(), 'clips/backdated'), newClip('alice', 'backdated', { createdAt: new Date('2020-01-01') })));
+await expectDenied("a clip's storagePath must be its own owner's prefix for this clip id", setDoc(doc(alice.firestore(), 'clips/wrong-path'), newClip('alice', 'wrong-path', { storagePath: 'clips/bob/someone-elses-video' })));
+await expectDenied('a caption over 200 characters is rejected', setDoc(doc(alice.firestore(), 'clips/long-caption'), newClip('alice', 'long-caption', { caption: 'x'.repeat(201) })));
+await expectDenied('a clip needs a videoUrl', setDoc(doc(alice.firestore(), 'clips/no-url'), (({ videoUrl, ...rest }) => rest)(newClip('alice', 'no-url'))));
 await expectDenied('the owner cannot update their own clip — not even to un-hide it', updateDoc(doc(alice.firestore(), 'clips/alice-hidden-clip'), { hidden: false }));
 await expectDenied("a different user cannot delete alice's clip", deleteDoc(doc(bob.firestore(), 'clips/alice-clip')));
 await expectAllowed('the owner can delete their own clip', deleteDoc(doc(alice.firestore(), 'clips/second-alice-clip')));
 
+console.log('\n— users/{userId}/blocks/{blockedId}: private to the blocker, create/delete only —');
+await expectAllowed('a user can block another user', setDoc(doc(bob.firestore(), 'users/bob/blocks/alice'), { createdAt: serverTimestamp() }));
+await expectAllowed('the blocker can read their own block list', getDoc(doc(bob.firestore(), 'users/bob/blocks/alice')));
+await expectDenied('the blocked user cannot see they were blocked', getDoc(doc(alice.firestore(), 'users/bob/blocks/alice')));
+await expectDenied('an unauthenticated client cannot read a block list', getDoc(doc(anon.firestore(), 'users/bob/blocks/alice')));
+await expectDenied("a user cannot add to someone else's block list", setDoc(doc(alice.firestore(), 'users/bob/blocks/carol'), { createdAt: serverTimestamp() }));
+await expectDenied('a user cannot block themselves', setDoc(doc(bob.firestore(), 'users/bob/blocks/bob'), { createdAt: serverTimestamp() }));
+await expectDenied('a block cannot carry a forged timestamp', setDoc(doc(bob.firestore(), 'users/bob/blocks/carol'), { createdAt: new Date('2020-01-01') }));
+await expectDenied('a block cannot be edited', updateDoc(doc(bob.firestore(), 'users/bob/blocks/alice'), { createdAt: serverTimestamp() }));
+await expectDenied("a user cannot unblock on someone else's behalf", deleteDoc(doc(alice.firestore(), 'users/bob/blocks/alice')));
+await expectAllowed('the blocker can unblock', deleteDoc(doc(bob.firestore(), 'users/bob/blocks/alice')));
+
 console.log('\n— reports/{reportId}: write-only from the client, reporterId cannot be spoofed —');
-await expectAllowed('an authenticated user can report a clip as themselves', addDoc(collection(bob.firestore(), 'reports'), { reporterId: 'bob', clipId: 'alice-clip', reason: 'spam', createdAt: 4 }));
-await expectDenied('a user cannot file a report attributed to someone else', addDoc(collection(bob.firestore(), 'reports'), { reporterId: 'alice', clipId: 'alice-clip', reason: 'spam', createdAt: 4 }));
-await expectDenied('an unauthenticated client cannot file a report', addDoc(collection(anon.firestore(), 'reports'), { reporterId: 'anon', clipId: 'alice-clip', reason: 'spam', createdAt: 4 }));
+const report = (reporterId, over = {}) => ({ reporterId, clipId: 'alice-clip', reason: 'spam', createdAt: serverTimestamp(), ...over });
+await expectAllowed('an authenticated user can report a clip as themselves', setDoc(doc(bob.firestore(), 'reports/alice-clip_bob'), report('bob')));
+await expectDenied('reporting the same clip twice is refused (one report per person per clip)', setDoc(doc(bob.firestore(), 'reports/alice-clip_bob'), report('bob', { reason: 'other' })));
+await expectDenied('a user cannot file a report attributed to someone else', setDoc(doc(bob.firestore(), 'reports/alice-clip_alice'), report('alice')));
+await expectDenied('the report id must be {clipId}_{reporterId} (no minting extra reports)', setDoc(doc(bob.firestore(), 'reports/another-id'), report('bob')));
+await expectDenied('an unknown reason is rejected', setDoc(doc(bob.firestore(), 'reports/alice-clip_bob2'), report('bob', { reason: 'because' })));
+await expectDenied('a report cannot carry extra fields', setDoc(doc(carol.firestore(), 'reports/alice-clip_carol'), report('carol', { note: 'x' })));
+await expectDenied('a report cannot carry a forged timestamp', setDoc(doc(carol.firestore(), 'reports/alice-clip_carol'), report('carol', { createdAt: new Date('2020-01-01') })));
+await expectDenied('an unauthenticated client cannot file a report', setDoc(doc(anon.firestore(), 'reports/alice-clip_anon'), report('anon')));
 await expectDenied('no client, not even the reporter, can read reports back', getDoc(doc(bob.firestore(), 'reports/anything')));
+
+console.log('\n— admins and moderationLog: closed to every client —');
+await expectDenied('a user cannot make themselves an admin', setDoc(doc(alice.firestore(), 'admins/alice'), {}));
+await expectDenied('an admin cannot read the admin list as a client', getDoc(doc(alice.firestore(), 'admins/alice')));
+await expectDenied('nobody can read the moderation log', getDoc(doc(alice.firestore(), 'moderationLog/anything')));
+await expectDenied('nobody can write the moderation log', setDoc(doc(alice.firestore(), 'moderationLog/forged'), { adminUid: 'alice' }));
 
 await testEnv.cleanup();
 

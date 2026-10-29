@@ -24,6 +24,22 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Users this user has blocked. Apple's UGC guideline requires being
+    // able to block abusive users, not just report their clips; the feed
+    // filters blocked authors out client-side from this list. Private to
+    // the blocker (nobody, the blocked user included, can read it), and a
+    // block is only ever created or removed, never edited. `createdAt`
+    // must be the server's clock, like clips, so it can't be forged.
+    match /users/{userId}/blocks/{blockedId} {
+      allow read, delete: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && blockedId != userId
+        && request.resource.data.keys().hasOnly(['createdAt'])
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
+    }
+
     // A user's local stop-motion projects, synced to the cloud (the paid
     // "cloud save" feature — see RUMBO.md's Business model section).
     // Ownership is fixed at creation and never transferable: read/delete
@@ -74,7 +90,23 @@ service cloud.firestore {
       allow read: if resource.data.hidden != true || (request.auth != null && request.auth.uid == resource.data.ownerId);
       // A client can only ever publish a clip as not-yet-hidden — hidden
       // is exclusively the moderation Cloud Function's to set.
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.ownerId && request.resource.data.hidden == false;
+      //
+      // The document's shape is pinned, not just its owner: only the
+      // fields the feed actually uses (so a client can't smuggle in
+      // `likes` or anything else out of v1 scope), `createdAt` must be the
+      // server's clock (a client can't backdate or future-date a clip to
+      // game a chronological feed), and `storagePath` must be exactly this
+      // owner's own Storage prefix for this clip id (so a clip can't point
+      // at someone else's video file).
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.ownerId
+        && request.resource.data.hidden == false
+        && request.resource.data.keys().hasOnly(['ownerId', 'storagePath', 'videoUrl', 'caption', 'createdAt', 'hidden', 'width', 'height', 'fps', 'frames'])
+        && request.resource.data.keys().hasAll(['ownerId', 'storagePath', 'videoUrl', 'createdAt', 'hidden'])
+        && request.resource.data.storagePath == 'clips/' + request.resource.data.ownerId + '/' + clipId
+        && request.resource.data.videoUrl is string
+        && request.resource.data.createdAt == request.time
+        && (!('caption' in request.resource.data) || (request.resource.data.caption is string && request.resource.data.caption.size() <= 200));
       // No client update at all, not even the owner's — there's nothing
       // in v1 scope a client should be able to change about a published
       // clip (no caption editing, no un-hiding their own moderated
@@ -82,6 +114,21 @@ service cloud.firestore {
       // genuine "take this down myself" action, same as `projects`.
       allow update: if false;
       allow delete: if request.auth != null && request.auth.uid == resource.data.ownerId;
+    }
+
+    // The internal review panel's allowlist (task 5.3): `admins/{uid}`
+    // existing is what makes a signed-in user a moderator in the review
+    // callables. Nobody can read or write it from a client — not even an
+    // admin about themselves — so the only ways to grant access are the
+    // Firebase console or Admin SDK code. (Firestore denies unmatched paths
+    // anyway; this is written out so the intent can't be undone by a
+    // future wildcard rule.) `moderationLog` is the audit trail those
+    // callables write, equally closed.
+    match /admins/{uid} {
+      allow read, write: if false;
+    }
+    match /moderationLog/{entryId} {
+      allow read, write: if false;
     }
 
     // A report against a clip (task 5.1). Deliberately write-only from
@@ -97,7 +144,19 @@ service cloud.firestore {
       // `projects`' create rule already uses for `ownerId` — otherwise
       // one user could file a report that falsely attributes itself to
       // someone else.
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.reporterId;
+      //
+      // The id must be `{clipId}_{reporterId}` — one report per person per
+      // clip. A repeat is then a refused write (no update is allowed), so
+      // one user re-reporting cannot inflate the count the moderation
+      // function reads. The shape is pinned too: a known reason and the
+      // server's clock, nothing else.
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.reporterId
+        && reportId == request.resource.data.clipId + '_' + request.auth.uid
+        && request.resource.data.keys().hasOnly(['reporterId', 'clipId', 'reason', 'createdAt'])
+        && request.resource.data.keys().hasAll(['reporterId', 'clipId', 'reason', 'createdAt'])
+        && request.resource.data.reason in ['inappropriate', 'harassment', 'spam', 'copyright', 'other']
+        && request.resource.data.createdAt == request.time;
       allow update, delete: if false;
     }
   }

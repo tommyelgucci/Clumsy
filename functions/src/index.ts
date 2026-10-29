@@ -1,9 +1,11 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { deriveAppAccountToken } from './accountToken.js';
 import { shouldHideClip } from './moderation.js';
+import { listReportedClipsHandler, reviewClipHandler } from './reviewHandlers.js';
 import { ReceiptRejected, validateReceipt } from './validateReceipt.js';
 
 initializeApp();
@@ -115,4 +117,18 @@ export const validateReceiptCallable = onCall<{ transactionId: unknown }>(
     await getFirestore().doc(`entitlements/${uid}`).set(update, { merge: true });
     return update;
   },
+);
+
+/**
+ * Internal review panel (task 5.3). Both callables check the caller has an
+ * `admins/{uid}` document before doing anything — see reviewHandlers.ts.
+ * To make someone an admin, create that document (empty is fine) from the
+ * Firebase console; no client can write it.
+ */
+export const listReportedClips = onCall(async (request) =>
+  listReportedClipsHandler({ db: getFirestore(), bucket: getStorage().bucket() }, request.auth?.uid),
+);
+
+export const reviewClip = onCall(async (request) =>
+  reviewClipHandler({ db: getFirestore(), bucket: getStorage().bucket() }, request.auth?.uid, request.data),
 );

@@ -119,14 +119,16 @@ export async function exportVideo(engine: Engine, { watermark, onProgress }: Exp
 }
 
 /** Hands the finished file to the user: the share sheet where the platform
- *  offers one for files (iOS: Save Video, AirDrop, Messages…), otherwise a
- *  plain download — `<a download>` does nothing inside WKWebView, which is
+ *  offers one for files (iOS: Save Video, AirDrop, Messages…) with `caption`
+ *  as the prefilled text (task 4.4: the app hashtag, so it lands on
+ *  Instagram/TikTok/X/Threads/Facebook through their own share targets, no
+ *  per-platform API), otherwise a plain download — `<a download>` does nothing inside WKWebView, which is
  *  why the share sheet is tried first. */
-export async function deliverVideo(blob: Blob, filename: string): Promise<void> {
+export async function deliverVideo(blob: Blob, filename: string, caption?: string): Promise<void> {
   const file = new File([blob], filename, { type: 'video/mp4' });
   if (navigator.canShare?.({ files: [file] })) {
     try {
-      await navigator.share({ files: [file] });
+      await navigator.share({ files: [file], text: caption });
       return;
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return; // user dismissed the sheet

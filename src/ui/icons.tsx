@@ -229,6 +229,25 @@ export function ExportIcon({ size = 16 }: IconProps) {
   );
 }
 
+export function PublishIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>
+      <path d="M7 18a4 4 0 0 1-.6-7.96A6 6 0 0 1 18 9.5 4.5 4.5 0 0 1 17.5 18H7Z" />
+      <path d="M12 16v-5" />
+      <path d="m9.5 12.5 2.5-2.5 2.5 2.5" />
+    </svg>
+  );
+}
+
+export function FeedIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>
+      <rect x="4" y="3" width="16" height="8" rx="2" />
+      <rect x="4" y="13" width="16" height="8" rx="2" />
+    </svg>
+  );
+}
+
 export function CameraIcon({ size = 16 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>

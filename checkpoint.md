@@ -1,5 +1,127 @@
 # Checkpoint — Progress log
 
+### 2026-10-29 — Internal review panel (task 5.3) and a working Functions emulator
+
+- **`functions/src/review.ts` (pure, unit-tested) + `reviewHandlers.ts`**:
+  two callables, `listReportedClips` and `reviewClip`. Both check the caller
+  has an `admins/{uid}` document first (`permission-denied` otherwise,
+  `unauthenticated` with no sign-in). The queue is one entry per reported
+  clip that still exists, **oldest report first**, each with a deadline of
+  24h after its oldest report (Apple's expectation) so working from the top
+  meets it. `reviewClip` does **restore** (`hidden: false`, reports
+  cleared) or **delete** (video file first, then the clip document and its
+  reports — so a failed file delete can be retried instead of orphaning the
+  file). A `storagePath` that isn't exactly `clips/{owner}/{clip}` is never
+  deleted from Storage. Every decision is written to `moderationLog` (who,
+  what, reasons, report count).
+- **Allowlist = Firestore `admins/{uid}`**, not an env var: changeable
+  without a redeploy, and `firestore.rules` now closes `admins` and
+  `moderationLog` to every client (written out explicitly, with tests). To
+  make someone a moderator, create an empty `admins/<their uid>` document in
+  the Firebase console; the panel tells a refused account exactly which
+  document to create.
+- **`admin/`: the panel**, a separate small Vite app (`npm run dev:admin`,
+  `npm run build:admin` → `dist-admin/`, served by Firebase Hosting —
+  `firebase.json` gained a `hosting` block with `noindex`). Deliberately NOT
+  part of the main build, since that is what Capacitor copies into the iOS
+  app and a moderation tool has no place in the App Store binary. Shows
+  each reported clip with a video player, caption, owner, report reasons
+  tallied, and a deadline label (ok / soon in the last 4h / OVERDUE by …).
+  Restore is one click; delete asks for a second confirming click.
+  Sign-in is Google popup (the Google provider must be enabled in the
+  console — unverified); against the emulators it is anonymous.
+- **The Functions emulator works in this sandbox after all.** It was
+  reported broken in 5.2: it shut down registering the Firestore trigger
+  with `request blocked: no rule allows host "127.0.0.1"`. Cause: the
+  firebase CLI sends its own 127.0.0.1 call through the egress proxy.
+  Running it with the proxy variables unset (`env -u HTTPS_PROXY -u
+  https_proxy -u GLOBAL_AGENT_HTTPS_PROXY …`) fixes it, so the real
+  `onReportCreated` trigger is now verified (a report hides the clip) and
+  `cloud-smoke` no longer simulates that step with an admin write. Needs
+  `npm --prefix functions run build` first (the emulator loads `lib/`).
+- **Verified:** `functions` unit tests (44) and `test:emulator` (handlers
+  against the real Firestore + Storage emulators: access control, queue
+  order, restore, delete incl. the file, tampered path, already-gone,
+  audit log, bad requests); `test:rules` (now also `admins`/`moderationLog`);
+  `test:admin-smoke` (the panel through its UI with all four emulators: the
+  trigger hides reported clips, queue order and urgency, restore, delete
+  with confirmation and Cancel, file gone from Storage, audit log, and a
+  second non-admin account refused both in the UI and calling `reviewClip`
+  directly); `cloud-smoke`. Mutation-checked: removing the admin check from
+  the handler makes four checks fail.
+- **Not verified / open:** Google sign-in for moderators and a real Firebase
+  project (deploying functions, rules, indexes, hosting); `listReportedClips`
+  reads at most 500 reports (oldest first, so the cap only ever hides the
+  newest — fine for v1, revisit if the backlog is ever that deep); nothing
+  notifies a moderator that a report arrived, so the 24-hour clock only
+  helps if someone opens the panel — worth a push/email alert before launch;
+  the admin chunk is ~680 kB (Firebase + React) and loads only for moderators.
+
+### 2026-10-29 — Cloud client: publish, feed, report, block, entitlement gating (tasks 3.5, 4.1-4.3, 5.1)
+
+The server half (rules, Cloud Functions) existed; this is the client that
+uses it, verified end to end against the local Auth/Firestore/Storage
+emulators with two signed-in users driving the real UI.
+
+- **`src/cloud/`**: `firebase.ts` (config from `VITE_FIREBASE_*`, or
+  `VITE_USE_FIREBASE_EMULATORS=true`; `.env.example` lists them),
+  `auth.ts`, `clips.ts` (publish, paged feed, delete own, report, block,
+  entitlement listener), `clipModel.ts` (pure, unit-tested: caption
+  normalization, document shape, block filtering, report ids), `hooks.ts`.
+  `firebase` moved from devDependencies to dependencies.
+- **The app stays local-first:** with no Firebase config, `cloudAvailable`
+  (`cloud/config.ts`, which imports nothing from Firebase) is false and no
+  cloud UI renders at all. The SDK is a separate ~570 kB lazy chunk: the
+  main bundle is still ~400 kB, and a production build of an unconfigured
+  app requests no Firebase code (checked with Playwright against `vite
+  preview`). Without that split the main bundle had jumped to 975 kB.
+- **UI**: Publish (caption, then export + upload in one flow) and Feed
+  buttons in the top rail. Feed: newest first, "Load more" pages of 12,
+  inline `<video>`, per clip Report (reason picker) / Block author, or
+  Delete on your own. Reported clips and blocked authors vanish at once.
+- **Rules hardened** (`firestore.rules`, `storage.rules`, with tests): new
+  `users/{uid}/blocks` (private to the blocker, create/delete only —
+  Apple's UGC guideline needs blocking, which didn't exist); clips pin
+  their field set, server-clock `createdAt`, and an owner-scoped
+  `storagePath`; reports use the id `{clipId}_{reporterId}` (one per person
+  per clip, so repeats can't inflate the moderation count) with a known
+  reason and server time; storage accepts only `video/mp4` under 100 MB.
+  `firestore.indexes.json` adds the `hidden`+`createdAt` composite index the
+  feed query needs in production (emulators don't require it).
+- **3.5 watermark gating**: `useEntitlement` listens to
+  `entitlements/{uid}`; the export (and publish) watermark is on unless it
+  is active. No entitlement, signed out, or no cloud = free plan.
+- **Share caption (4.4)**: `deliverVideo` passes the app hashtag as the
+  share sheet's text. Device-only, unverified.
+- **Bug found and fixed along the way:** overlays rendered inside the
+  rails were sized to the rail, not the screen (`backdrop-filter` makes
+  its element the containing block for `position: fixed` children). That
+  included 2.4's export progress overlay. All overlays now render through
+  `ui/Overlay.tsx`, a portal into `.cl-app`.
+- **Verified:** `test:rules` (now covers blocks, clip shape, report ids;
+  mutation-checked), `test:storage-rules`, 166 unit tests, and the new
+  `test:cloud-smoke` (publish → file is a real 3-frame H.264 MP4 at a
+  public URL; watermark flips when an entitlement is written; report →
+  document with the right reporter/reason; block persists across reload;
+  delete removes document and file; 14 seeded clips page in order). It is
+  mutation-checked: disabling the block filter makes it fail.
+- **Not done / not verifiable here:**
+  - **3.1 Sign in with Apple.** `signIn()` signs in anonymously against the
+    emulators and otherwise says it isn't set up. The real flow needs the
+    Capacitor Firebase plugin, the Apple capability, `GoogleService-Info.plist`
+    and a Firebase project — none available here, and adding the native
+    plugin blind would risk the iOS project. Until it exists the feature is
+    effectively off outside the emulators.
+  - **5.2's function can't run in this sandbox's emulators**, so the
+    smoke simulates the one thing it does (setting `hidden`) with an admin
+    write, labeled as such in the script.
+  - Any real Firebase project, deployed rules/indexes, and the iOS share
+    sheet. Extra layers and cloud save (3.5's description) have nothing to
+    gate yet.
+  - One report hides a clip (`REPORT_THRESHOLD = 1`, documented earlier),
+    so any signed-in user can take down any clip pending review. That is the
+    standing decision in `functions/src/moderation.ts`, not changed here.
+
 ### 2026-10-25 — Local export to .mp4 with watermark (task 2.4)
 
 - **`src/export/exportVideo.ts`**: every frame goes through the same
