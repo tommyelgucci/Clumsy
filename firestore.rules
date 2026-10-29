@@ -129,7 +129,19 @@ service cloud.firestore {
       // `projects`' create rule already uses for `ownerId` — otherwise
       // one user could file a report that falsely attributes itself to
       // someone else.
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.reporterId;
+      //
+      // The id must be `{clipId}_{reporterId}` — one report per person per
+      // clip. A repeat is then a refused write (no update is allowed), so
+      // one user re-reporting cannot inflate the count the moderation
+      // function reads. The shape is pinned too: a known reason and the
+      // server's clock, nothing else.
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.reporterId
+        && reportId == request.resource.data.clipId + '_' + request.auth.uid
+        && request.resource.data.keys().hasOnly(['reporterId', 'clipId', 'reason', 'createdAt'])
+        && request.resource.data.keys().hasAll(['reporterId', 'clipId', 'reason', 'createdAt'])
+        && request.resource.data.reason in ['inappropriate', 'harassment', 'spam', 'copyright', 'other']
+        && request.resource.data.createdAt == request.time;
       allow update, delete: if false;
     }
   }

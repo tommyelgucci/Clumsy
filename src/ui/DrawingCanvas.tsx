@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { BRUSH_CATEGORIES, BRUSH_CATEGORY_LABELS, DEFAULT_BRUSHES, type BrushPreset } from '../core/brush';
 import { newDocument, newLayer } from '../core/document';
 import { clamp, hexToRgb, mat3Apply, mat3FromTRS, rgbToHex } from '../core/math';
@@ -12,6 +12,8 @@ import { BucketIcon, CloseIcon, DuplicateFrameIcon, LassoIcon, LayersIcon, NewPr
 import { LayersPanel } from './LayersPanel';
 import { CapturePanel } from './CapturePanel';
 import { ExportButton } from './ExportButton';
+import { cloudAvailable } from '../cloud/config';
+import { useCloudUser, useEntitlement } from '../cloud/hooks';
 import { Timeline } from './Timeline';
 import { TransformPanel } from './TransformPanel';
 import { usePalettes } from '../state/palettes';
@@ -140,6 +142,8 @@ type TransformSnapshot = ReturnType<Engine['snapshotLayerTransform']>;
  * project has never needed before now. See `App.tsx` for the `key`/state
  * that actually does the remounting.
  */
+const CloudControls = lazy(() => import('./CloudControls'));
+
 export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { preset?: FormatPreset; onNewProject?: (preset: FormatPreset) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
@@ -479,6 +483,8 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
   const history = engineRef.current?.history;
   const canUndo = history?.canUndo ?? false;
   const canRedo = history?.canRedo ?? false;
+  const { user: cloudUser } = useCloudUser();
+  const cleanExport = useEntitlement(cloudUser?.uid ?? null);
 
   return (
     <div className="cl-app">
@@ -590,7 +596,12 @@ export function DrawingCanvas({ preset = FORMAT_PRESETS[0], onNewProject }: { pr
         )}
         {ready && engineRef.current && (
           <>
-            <ExportButton engine={engineRef.current} />
+            <ExportButton engine={engineRef.current} cleanExport={cleanExport} />
+            {cloudAvailable && (
+              <Suspense fallback={null}>
+                <CloudControls engine={engineRef.current} user={cloudUser} cleanExport={cleanExport} />
+              </Suspense>
+            )}
             <span className="cl-rail-divider" />
           </>
         )}

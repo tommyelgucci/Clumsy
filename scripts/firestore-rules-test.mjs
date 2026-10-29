@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 
 // Verifies firestore.rules (task 3.2) against the local Firestore
 // emulator — no real Firebase project needed, since `.firebaserc`'s
@@ -60,6 +60,7 @@ await testEnv.withSecurityRulesDisabled(async (context) => {
 
 const alice = testEnv.authenticatedContext('alice');
 const bob = testEnv.authenticatedContext('bob');
+const carol = testEnv.authenticatedContext('carol');
 const anon = testEnv.unauthenticatedContext();
 
 console.log('\n— users/{userId}: publicly readable, only the owner can write —');
@@ -127,9 +128,15 @@ await expectDenied("a user cannot unblock on someone else's behalf", deleteDoc(d
 await expectAllowed('the blocker can unblock', deleteDoc(doc(bob.firestore(), 'users/bob/blocks/alice')));
 
 console.log('\n— reports/{reportId}: write-only from the client, reporterId cannot be spoofed —');
-await expectAllowed('an authenticated user can report a clip as themselves', addDoc(collection(bob.firestore(), 'reports'), { reporterId: 'bob', clipId: 'alice-clip', reason: 'spam', createdAt: 4 }));
-await expectDenied('a user cannot file a report attributed to someone else', addDoc(collection(bob.firestore(), 'reports'), { reporterId: 'alice', clipId: 'alice-clip', reason: 'spam', createdAt: 4 }));
-await expectDenied('an unauthenticated client cannot file a report', addDoc(collection(anon.firestore(), 'reports'), { reporterId: 'anon', clipId: 'alice-clip', reason: 'spam', createdAt: 4 }));
+const report = (reporterId, over = {}) => ({ reporterId, clipId: 'alice-clip', reason: 'spam', createdAt: serverTimestamp(), ...over });
+await expectAllowed('an authenticated user can report a clip as themselves', setDoc(doc(bob.firestore(), 'reports/alice-clip_bob'), report('bob')));
+await expectDenied('reporting the same clip twice is refused (one report per person per clip)', setDoc(doc(bob.firestore(), 'reports/alice-clip_bob'), report('bob', { reason: 'other' })));
+await expectDenied('a user cannot file a report attributed to someone else', setDoc(doc(bob.firestore(), 'reports/alice-clip_alice'), report('alice')));
+await expectDenied('the report id must be {clipId}_{reporterId} (no minting extra reports)', setDoc(doc(bob.firestore(), 'reports/another-id'), report('bob')));
+await expectDenied('an unknown reason is rejected', setDoc(doc(bob.firestore(), 'reports/alice-clip_bob2'), report('bob', { reason: 'because' })));
+await expectDenied('a report cannot carry extra fields', setDoc(doc(carol.firestore(), 'reports/alice-clip_carol'), report('carol', { note: 'x' })));
+await expectDenied('a report cannot carry a forged timestamp', setDoc(doc(carol.firestore(), 'reports/alice-clip_carol'), report('carol', { createdAt: new Date('2020-01-01') })));
+await expectDenied('an unauthenticated client cannot file a report', setDoc(doc(anon.firestore(), 'reports/alice-clip_anon'), report('anon')));
 await expectDenied('no client, not even the reporter, can read reports back', getDoc(doc(bob.firestore(), 'reports/anything')));
 
 await testEnv.cleanup();
